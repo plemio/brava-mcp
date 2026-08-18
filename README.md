@@ -59,10 +59,11 @@ is why they travel with the columns rather than sitting in a README.
 
 ## The database
 
-Downloaded once into `~/.cache/brava-mcp/` at first use, and deliberately not
+873 MB, published as a
+[release asset](https://github.com/plemio/brava-mcp/releases/tag/data-v1) and
+downloaded once into `~/.cache/brava-mcp/` at first use. Deliberately not
 committed: deployments reset the clone on every spawn, so a gigabyte inside it
-would be re-fetched forever. A clone is 3.9 MB. 873 MB, published as a
-[release asset](https://github.com/plemio/brava-mcp/releases/tag/data-v1).
+would be re-fetched forever. Cloning this repo costs 3.9 MB.
 
 Built by `etl/build_db.py` from the 280 published `phenotype/{P}.{ANC}.json`
 files. Those carry the same data as the 19,541 per-gene files, so the pivot is
