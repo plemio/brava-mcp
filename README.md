@@ -25,8 +25,9 @@ Summary statistics only. **Not for clinical use.**
 | `gene_variants` | The individual variants driving a signal, with per-biobank concordance |
 | `catalog` | The 44 traits, the contributing biobanks, the analysis vocabulary |
 
-Every tool is read-only, paginates with `offset`/`next_offset`, and is capped at a
-25,000-character response. When a result is cut, the note names the parameters that
+Every tool is read-only and capped at a 25,000-character response. The five that
+return ranked rows page with `offset`/`next_offset`; `search` and `catalog` return
+bounded sets and do not. When a result is cut, the note names the parameters that
 would narrow it and the offset that continues it, rather than just truncating.
 
 ## Data source and traffic discipline

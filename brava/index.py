@@ -98,8 +98,29 @@ def _gene_lookup() -> tuple[dict[str, int], dict[str, list[int]]]:
     return by_ensg, by_symbol
 
 
+def ambiguous_alternatives(query: str, chosen: int) -> list[str]:
+    """Other Ensembl ids sharing this symbol, if any.
+
+    25 symbols in the index map to more than one Ensembl gene, MATR3 and MKKS
+    among them. Answering for one of them without saying so would present a
+    result for a gene the user did not ask about, and there is no way for them
+    to notice. Callers surface this; resolution itself stays deterministic.
+    """
+    q = (query or "").strip().upper()
+    if not q or ENSG_RE.match(q):
+        return []
+    _, by_symbol = _gene_lookup()
+    ids = genes()["ids"]
+    return [ids[i] for i in by_symbol.get(q, []) if i != chosen]
+
+
 def resolve_gene(query: str) -> int | None:
-    """Exact resolution of an Ensembl id or gene symbol to a gene_idx."""
+    """Exact resolution of an Ensembl id or gene symbol to a gene_idx.
+
+    Where a symbol is shared, the first Ensembl id in index order wins. That is
+    deterministic but arbitrary, so callers should pair this with
+    `ambiguous_alternatives` and tell the user.
+    """
     q = (query or "").strip().upper()
     if not q:
         return None

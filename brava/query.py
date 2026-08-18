@@ -29,7 +29,16 @@ Z95 = 1.959963984540054
 
 # Keys carrying a p-value in any row this module emits. They are formatted LAST,
 # after sorting, because a formatted p is a string and would sort lexically.
-P_KEYS = ("p", "p_het", "het_p", "p_burden", "p_skat", "p_skato", "heterogeneity_p")
+P_KEYS = (
+    "p",
+    "p_het",
+    "het_p",
+    "p_burden",
+    "p_skat",
+    "p_skato",
+    "heterogeneity_p",
+    "strongest_p",  # produced by aggregate(), which runs before formatting
+)
 
 
 def fmt_p(p: float | None) -> str | None:
@@ -67,8 +76,12 @@ def aggregate(rows: list[dict[str, Any]], by: str) -> list[dict[str, Any]]:
     hand. Doing it here turns ~16 calls plus manual counting into one call, which
     is the whole point of an outcome-shaped tool.
 
-    Rows must already be deduplicated to one per gene-trait pair and sorted by p
-    ascending, so the first row seen for a key is also its strongest.
+    Rows must arrive UNFORMATTED (numeric `p`) and already deduplicated to one row
+    per gene-trait pair, sorted by p ascending, so the first row seen for a key is
+    also its strongest. Formatted p-values are strings, and sorting those compares
+    them lexically: "1.00e-08" would outrank "9.99e-300", and "<5e-324" (the most
+    significant value there is) would sort last of all. `format_pvalues` is called
+    on the RESULT of this function, never before it.
     """
     key, partner, label = (
         ("ensg", "trait", "traits") if by == "gene" else ("trait_id", "gene", "genes")
@@ -316,13 +329,21 @@ def all_results_rows(
     category: str | None = None,
     trait_type: str | None = None,
     max_p: float | None = None,
+    format_p: bool = True,
 ) -> list[dict[str, Any]]:
     """Decode a bundled `all_results.{ANC}.json` shard.
 
     This shard holds every row clearing the suggestive cutoff (p < 1e-4) for one
     ancestry, across ALL traits and genes, so it answers cross-trait questions
-    the per-file layout cannot, at zero network cost. `beta` is null outside the
-    Burden test.
+    the per-file layout cannot, at zero network cost.
+
+    `beta` and `se` always come from the inverse-variance-weighted Burden
+    meta-analysis, including on SKAT and SKAT-O rows: all 4,348 SKAT-O rows in the
+    All shard carry one. (Upstream's types.ts says beta is null outside Burden;
+    the published data disagrees, so the data wins.)
+
+    Set format_p=False to keep p numeric, which callers that sort or aggregate
+    downstream must do.
     """
     from .constants import TESTS
 
@@ -370,7 +391,7 @@ def all_results_rows(
         )
 
     out.sort(key=lambda r: (r["p"] is None, r["p"]))
-    return format_pvalues(out)
+    return format_pvalues(out) if format_p else out
 
 
 # ---------------------------------------------------------------------------

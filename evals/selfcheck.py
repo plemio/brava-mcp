@@ -1,10 +1,15 @@
-"""Walk each eval question through the tools and check the gold answer comes out.
+"""Walk each eval question through the tools and check the evidence comes out.
 
-This is not the full evaluation: it fixes the tool path instead of letting a
-model choose it, so it cannot detect a model getting lost. What it does prove is
-that every question IS answerable through the exposed surface, and at what call
-cost. A server that answers correctly in 25 calls is a bad server, so the call
-count is the number to watch, not just the hit rate.
+This is not the full evaluation, and the distinction matters. It checks each
+question's `evidence`, the values the tools must RETURN for the answer to be
+derivable, never the `answer` itself: several answers are conclusions ("does it
+clear the threshold?" -> "no") that no string match can verify, only a model
+can. So this proves the data is reachable and at what call cost; whether a model
+reaches the right conclusion from it is the other half, and it needs the
+model-in-the-loop runner.
+
+A server that answers correctly in 25 calls is a bad server, so the call count is
+the number to watch, not just the hit rate.
 
 The LLM-in-the-loop runner (thread_ephemeral against the local engine) is the
 missing half; see the skill's references/evaluation.md.
@@ -14,6 +19,7 @@ missing half; see the skill's references/evaluation.md.
 
 import asyncio
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -42,10 +48,17 @@ async def paths() -> dict[str, list]:
 
 
 def found(gold: str, blob: str) -> bool:
-    """q05/q07 answer with counts the tools report rather than spell out."""
-    if gold in blob:
-        return True
-    return all(part.strip() in blob for part in gold.split("/"))
+    """Does the value appear in the response, as a value and not inside a word?
+
+    Word-anchored, because a plain substring test cannot fail: "GCK" would be
+    satisfied by "GCKR", "27" by the 27 inside "2.27e-05", and "no" by the "no"
+    inside "note:". The boundary is widened to exclude "." as well as word
+    characters, so a number cannot match part of a longer decimal.
+
+    Deliberately NOT restricted to data lines: `warning:` carries the calibration
+    -control flag, which is itself evidence for one of the questions.
+    """
+    return re.search(rf"(?<![\w.]){re.escape(gold)}(?![\w.])", blob) is not None
 
 
 async def main() -> int:
@@ -57,16 +70,17 @@ async def main() -> int:
         before = client.outbound_requests()
         calls = plans[q["id"]]
         blob = "".join(await asyncio.gather(*calls))
-        ok = found(q["answer"], blob)
+        ok = all(found(e, blob) for e in q["evidence"])
         failures += not ok
         rows.append(
             (q["id"], "PASS" if ok else "FAIL", len(calls),
-             client.outbound_requests() - before, len(blob), q["answer"])
+             client.outbound_requests() - before, len(blob),
+             q["answer"], " + ".join(q["evidence"]))
         )
 
-    print(f"{'id':5} {'':4} {'calls':>5} {'http':>5} {'chars':>7}  answer")
+    print(f"{'id':5} {'':4} {'calls':>5} {'http':>5} {'chars':>7}  {'answer':28} evidence")
     for r in rows:
-        print(f"{r[0]:5} {r[1]:4} {r[2]:>5} {r[3]:>5} {r[4]:>7}  {r[5]}")
+        print(f"{r[0]:5} {r[1]:4} {r[2]:>5} {r[3]:>5} {r[4]:>7}  {r[5]:28} {r[6]}")
     print()
     print(f"accuracy {len(rows) - failures}/{len(rows)}"
           f" | median calls {sorted(r[2] for r in rows)[len(rows) // 2]}"

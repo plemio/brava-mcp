@@ -62,9 +62,50 @@ class TestCanonicalTraitHits:
         await client.close()
 
 
+class TestTheMaskMafGridIsPinned:
+    """Every cell of the (mask, MAF) grid, not just the symmetric one.
+
+    Both dimensions were previously anchored only at index 0 (pLoF, <0.1%),
+    which is the one cell where confusing the two columns changes nothing. These
+    four cells have four distinct p-values and betas, so any decode that reads
+    one dimension from the other's column moves at least one of them.
+    """
+
+    @pytest.mark.parametrize(
+        "mask,maf,p,beta",
+        [
+            ("pLoF", "<0.1%", "1.58e-159", "-0.0372"),
+            ("pLoF", "<0.01%", "1.12e-76", "-0.0366"),
+            ("pLoF | damaging missense", "<0.1%", "1.17e-205", "-0.0267"),
+            ("pLoF | damaging missense", "<0.01%", "6.46e-99", "-0.026"),
+        ],
+    )
+    async def test_each_cell_returns_its_own_numbers(self, mask, maf, p, beta):
+        out = await server.gene_associations(
+            "PCSK9", mask=mask, maf=maf, limit=1, max_p=1e-50
+        )
+        assert p in out, f"{mask} x {maf} should report p={p}"
+        assert beta in out
+        await client.close()
+
+
 class TestCalibrationControl:
     async def test_synonymous_mask_is_flagged_as_a_control(self):
         # A model must not read a synonymous hit as biology.
-        out = await server.gene_associations("PCSK9", mask="synonymous", limit=1)
+        out = await server.gene_associations(
+            "PCSK9", mask="synonymous", maf="<0.1%", limit=1
+        )
         assert "CALIBRATION CONTROL" in out
+        await client.close()
+
+    async def test_the_synonymous_row_itself_is_returned(self):
+        # The warning above is attached from the mask ARGUMENT, so it would
+        # appear even on an empty or wrong result set. Pin the data too: the
+        # synonymous control is nowhere near significant, which is the point of
+        # a calibration control.
+        out = await server.gene_associations(
+            "PCSK9", mask="synonymous", maf="<0.1%", limit=1
+        )
+        assert "0.00324" in out
+        assert "ns" in out
         await client.close()

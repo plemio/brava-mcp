@@ -7,6 +7,10 @@
     "expected_path": [
       "search or direct ENSG",
       "gene_associations"
+    ],
+    "evidence": [
+      "LDL cholesterol",
+      "1.58e-159"
     ]
   },
   {
@@ -16,15 +20,22 @@
     "answer_context": "beta=-0.03716, sign is what matters.",
     "expected_path": [
       "gene_associations"
+    ],
+    "evidence": [
+      "lowers",
+      "-0.0372"
     ]
   },
   {
     "id": "q03",
-    "question": "For PCSK9 and LDL cholesterol under the pLoF mask at MAF<0.1%%: counting only the five superpopulations EUR, AFR, AMR, EAS and SAS, in how many does the effect point the same way as the cross-ancestry meta AND reach nominal significance (p<0.05)? Give a number.",
-    "answer": "5",
+    "question": "For PCSK9 and LDL cholesterol under the pLoF mask at MAF<0.1%%: counting only the five superpopulations EUR, AFR, AMR, EAS and SAS, in how many does the effect point the same way as the cross-ancestry meta AND reach nominal significance (p<0.05)? Answer as 'k/5'.",
+    "answer": "5/5",
     "answer_context": "All five strata are negative and nominally significant; weakest is EAS at p=2.1e-4.",
     "expected_path": [
       "gene_phenotype_detail"
+    ],
+    "evidence": [
+      "5/5"
     ]
   },
   {
@@ -34,6 +45,10 @@
     "answer_context": "GCK at 1.51e-45; runner-up HNF1A at 1.58e-17.",
     "expected_path": [
       "phenotype_associations"
+    ],
+    "evidence": [
+      "GCK",
+      "1.51e-45"
     ]
   },
   {
@@ -43,6 +58,9 @@
     "answer_context": "Filtered count over one trait.",
     "expected_path": [
       "phenotype_associations with max_p"
+    ],
+    "evidence": [
+      "27"
     ]
   },
   {
@@ -52,6 +70,10 @@
     "answer_context": "PKD1 with 10 traits; runner-up APOB with 7.",
     "expected_path": [
       "top_associations with gene filter or full scan"
+    ],
+    "evidence": [
+      "PKD1",
+      "10"
     ]
   },
   {
@@ -61,6 +83,10 @@
     "answer_context": "Study-design lookup, not an association.",
     "expected_path": [
       "catalog or phenotype_associations header"
+    ],
+    "evidence": [
+      "1018590",
+      "72722"
     ]
   },
   {
@@ -70,6 +96,10 @@
     "answer_context": "p=4.17e-81. Only 6 pairs tie at the underflow floor, so rank 30 is unambiguous. Forces pagination past the default limit of 25.",
     "expected_path": [
       "top_associations with offset"
+    ],
+    "evidence": [
+      "TTN",
+      "Atrial fibrillation"
     ]
   },
   {
@@ -79,6 +109,9 @@
     "answer_context": "Variant level, p=1.62e-49.",
     "expected_path": [
       "gene_variants"
+    ],
+    "evidence": [
+      "1-55058636-G-A"
     ]
   },
   {
@@ -88,6 +121,10 @@
     "answer_context": "p=0.00324. Synonymous is a calibration control; a good answer says so.",
     "expected_path": [
       "gene_associations with mask"
+    ],
+    "evidence": [
+      "0.00324",
+      "CALIBRATION CONTROL"
     ]
   }
 ]

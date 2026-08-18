@@ -42,6 +42,12 @@ mcp = FastMCP("BRaVa")
 
 DISCLAIMER = "Summary statistics from the BRaVa flagship paper. Not for clinical use."
 
+# beta/SE come from the Burden meta-analysis even on rows whose reported p-value
+# is SKAT or SKAT-O. Stated per response rather than only in catalog(vocabulary):
+# a client that never calls the catalogue would otherwise read the beta as
+# belonging to the test named in the same row.
+BETA_NOTE = "beta/SE: inverse-variance-weighted Burden meta-analysis, whichever test the p-value comes from."
+
 # Every character of a response crosses the model's context. 25k is the fleet
 # budget; an unbounded gene PheWAS at limit=200 with all_tests measured 74k.
 CHARACTER_LIMIT = 25_000
@@ -104,6 +110,18 @@ def _emit(
 def _err(message: str) -> str:
     """Errors are guidance: say what went wrong AND what to do instead."""
     return toons.dumps({"error": message})
+
+
+def _ambiguity_note(query: str, chosen: int) -> str | None:
+    """Warn when a gene symbol maps to more than one Ensembl gene."""
+    others = ix.ambiguous_alternatives(query, chosen)
+    if not others:
+        return None
+    return (
+        f"'{query}' maps to more than one Ensembl gene. These results are for "
+        f"{ix.gene_info(chosen)['ensg']}; also matching: {', '.join(others)}. "
+        "Pass an Ensembl id to select a specific one."
+    )
 
 
 def _mask_note(mask_idx: int | None) -> str | None:
@@ -228,12 +246,13 @@ async def gene_associations(
         "test": test_name,
         "total_matching": len(rows),
         "results": rows[offset : offset + limit],
-        "note": DISCLAIMER,
+        "note": f"{BETA_NOTE} {DISCLAIMER}",
     }
     if offset + limit < len(rows):
         out["next_offset"] = offset + limit
-    if (mn := _mask_note(mask_idx)) :
-        out["warning"] = mn
+    notes = [n for n in (_ambiguity_note(gene, gidx), _mask_note(mask_idx)) if n]
+    if notes:
+        out["warning"] = " ".join(notes)
     return _emit(out, narrow=NARROW_GENE, offset=offset)
 
 
@@ -279,7 +298,7 @@ async def phenotype_associations(
     if pidx is None:
         return _err(
             f"Unknown trait '{phenotype}'. Call catalog(kind='phenotypes') for the 44 "
-            "traits BRaVa covers, or search('{phenotype}')."
+            f"traits BRaVa covers, or search('{phenotype}')."
         )
     pheno = ix.phenotypes()[pidx]
 
@@ -350,7 +369,7 @@ async def phenotype_associations(
         "results": rows[offset : offset + limit],
         "source": source
         + ("; showing each gene's most significant mask/MAF only" if collapse else ""),
-        "note": DISCLAIMER,
+        "note": f"{BETA_NOTE} {DISCLAIMER}",
     }
     if offset + limit < len(rows):
         out["next_offset"] = offset + limit
@@ -439,10 +458,11 @@ async def gene_phenotype_detail(
         "test": test_name,
         "strata": result["strata"],
         "replication": result["concordance"],
-        "note": DISCLAIMER,
+        "note": f"{BETA_NOTE} {DISCLAIMER}",
     }
-    if (mn := _mask_note(mask_idx)) :
-        out["warning"] = mn
+    notes = [n for n in (_ambiguity_note(gene, gidx), _mask_note(mask_idx)) if n]
+    if notes:
+        out["warning"] = " ".join(notes)
     return toons.dumps(out)
 
 
@@ -511,6 +531,8 @@ async def top_associations(
         if gidx is None:
             return _err(f"Unknown gene '{gene}'. Call search('{gene}').")
 
+    # Aggregation sorts on p, so it needs the numeric value: formatting first
+    # would make it compare "1.00e-08" against "9.99e-300" as strings.
     rows = q.all_results_rows(
         ix.all_results(ANCESTRIES[anc_idx]),
         ix.genes(),
@@ -521,6 +543,7 @@ async def top_associations(
         category=category,
         trait_type=trait_type,
         max_p=max_p,
+        format_p=group_by is None,
     )
     if group_by is not None and group_by not in ("gene", "trait"):
         return _err(
@@ -535,7 +558,7 @@ async def top_associations(
         rows = q.collapse_best(rows, ("ensg", "trait_id"))
     pairs = len(rows)
     if group_by:
-        rows = q.aggregate(rows, group_by)
+        rows = q.format_pvalues(q.aggregate(rows, group_by))
 
     if not rows and category:
         cats = sorted({p["category"] for p in ix.phenotypes()})
@@ -550,7 +573,7 @@ async def top_associations(
         "distinct_pairs": pairs,
         "grouped_by": group_by,
         "results": rows[offset : offset + limit],
-        "note": DISCLAIMER,
+        "note": f"{BETA_NOTE} {DISCLAIMER}",
     }
     if offset + limit < len(rows):
         out["next_offset"] = offset + limit
@@ -564,13 +587,14 @@ async def gene_variants(
     ancestry: str = DEFAULT_ANCESTRY,
     max_p: float | None = None,
     limit: int = 25,
+    offset: int = 0,
 ) -> str:
     """Single-variant results inside a gene, with per-biobank replication.
 
     Drops from gene-level burden testing down to the individual variants driving
     a signal. Each row carries the per-biobank effect-direction tally, the
     cross-biobank replication evidence no single-programme browser can show,
-    plus a gnomAD link for allele frequency, which BRaVa itself does not carry.
+    plus a gnomAD link per variant, where population allele frequencies live.
 
     Args:
         gene: Gene symbol or Ensembl id.
@@ -578,6 +602,7 @@ async def gene_variants(
         ancestry: All (cross-ancestry meta, default) or a specific stratum.
         max_p: p-value ceiling. The variant-level significance threshold is 1.82e-8.
         limit: Max rows (default 25).
+        offset: Skip this many rows, to page through a long result set.
 
     Returns: variant (chr-pos-ref-alt), p-value, beta with 95% CI, effect
     direction, effective sample size, I-squared, heterogeneity p, the ancestries
@@ -609,12 +634,9 @@ async def gene_variants(
                 info["ensg"], pidx if split else None, split
             )
             rows = vq.variant_rows(
-                payload, pidx, pheno["type"], max_p=max_p, limit=limit
+                payload, pidx, pheno["type"], max_p=max_p, limit=offset + limit
             )
         else:
-            meta = await client.gene_variants_payload(
-                info["ensg"], pidx if split else None, split
-            )
             payload = await client.gene_variants_anc_payload(
                 info["ensg"], pidx if split else None, split
             )
@@ -624,8 +646,8 @@ async def gene_variants(
                 anc_name,
                 pheno["type"],
                 max_p=max_p,
-                limit=limit,
-                chrom=meta.get("chr") or "",
+                limit=offset + limit,
+                chrom=info["chr"],
             )
     except client.NotFound:
         return _err(
@@ -663,11 +685,15 @@ async def gene_variants(
             "type": pheno["type"],
             "ancestry": ANCESTRY_LABEL[anc_name],
             "variant_significance_threshold": SIG_VARIANT,
-            "results": rows,
+            "total_matching": len(rows),
+            "results": rows[offset : offset + limit],
+            "next_offset": offset + limit if offset + limit < len(rows) else None,
             "note": f"'biobanks' counts concordant effect directions across contributing "
-            f"cohorts; '?' marks a cohort where the variant was absent. {DISCLAIMER}",
+            f"cohorts; '?' marks a cohort where the variant was absent. "
+            f"{BETA_NOTE} {DISCLAIMER}",
         },
         narrow="a smaller max_p",
+        offset=offset,
     )
 
 

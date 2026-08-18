@@ -9,6 +9,13 @@ data sits on a personal Cloudflare R2 free tier with hard monthly ceilings:
   * every fetched file is cached on disk FOREVER by default. The v1 gene-level
     data is immutable (every object still carries Last-Modified: 12 Aug 2026),
     so a given gene is downloaded once per deployment and never again.
+  * concurrent fetches of the same URL are COALESCED onto one request. Agents
+    routinely issue tool calls in parallel, and without this two calls landing on
+    a cold gene both miss the cache and both go out, which quietly breaks "once,
+    ever" the moment anything is concurrent.
+  * a 404 is cached too. Roughly 500 of the 20,033 Ensembl genes were never
+    tested, so an agent sweeping a gene list hits them repeatedly; without a
+    negative cache each miss is an unbounded, repeatable request upstream.
   * `outbound_requests()` counts what actually left the process, so the promise
     is testable rather than merely stated (see tests/test_traffic.py).
   * a semaphore keeps us from ever looking like a scraper.
@@ -26,6 +33,7 @@ import json
 import os
 import ssl
 import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
@@ -54,7 +62,14 @@ SSL_CTX = ssl.create_default_context(cafile=certifi.where())
 TIMEOUT = aiohttp.ClientTimeout(total=90, connect=10, sock_read=60)
 
 _session: aiohttp.ClientSession | None = None
-_memory: dict[str, Any] = {}
+_session_loop: "asyncio.AbstractEventLoop | None" = None
+# Bounded: a phenotype payload is ~2.3 MB and this process is a long-lived
+# daemon, so an unbounded dict would grow into the PM2 memory ceiling. Eviction
+# only costs a disk read, never a request upstream.
+_MEMORY_MAX = 24
+_memory: "OrderedDict[str, Any]" = OrderedDict()
+# URL -> the task already fetching it, so concurrent callers await one request.
+_inflight: dict[str, "asyncio.Task[Any]"] = {}
 _outbound = 0
 
 
@@ -75,6 +90,13 @@ def reset_counters() -> None:
     _outbound_reset()
 
 
+def _remember(url: str, payload: Any) -> None:
+    _memory[url] = payload
+    _memory.move_to_end(url)
+    while len(_memory) > _MEMORY_MAX:
+        _memory.popitem(last=False)
+
+
 def _outbound_reset() -> None:
     global _outbound
     _outbound = 0
@@ -83,6 +105,17 @@ def _outbound_reset() -> None:
 def _cache_path(url: str) -> Path:
     digest = hashlib.sha256(url.encode()).hexdigest()[:24]
     return CACHE_DIR / f"{digest}.json"
+
+
+def _missing_path(url: str) -> Path:
+    """Marker for a URL upstream has no object at.
+
+    Kept on disk rather than in memory so it also survives the per-worker stdio
+    fallback, where the process is torn down after every call and an in-memory
+    set would never be consulted twice.
+    """
+    digest = hashlib.sha256(url.encode()).hexdigest()[:24]
+    return CACHE_DIR / f"{digest}.404"
 
 
 def _read_disk(url: str) -> Any | None:
@@ -113,33 +146,63 @@ def _write_disk(url: str, payload: Any) -> None:
 
 
 def _get_session() -> aiohttp.ClientSession:
-    global _session
-    if _session is None or _session.closed:
+    """The shared session, rebuilt if the running event loop changed.
+
+    An aiohttp session binds to the loop that created it; reusing it from a
+    different one raises "Event loop is closed" on the first request. The daemon
+    only ever has one loop, but the stdio fallback and the test suite do not, and
+    a cache of connections is not worth a hard failure.
+    """
+    global _session, _session_loop
+    loop = asyncio.get_running_loop()
+    if _session is None or _session.closed or _session_loop is not loop:
         _session = aiohttp.ClientSession(
             connector=aiohttp.TCPConnector(ssl=SSL_CTX, limit=8),
             timeout=TIMEOUT,
             headers={"User-Agent": USER_AGENT, "Accept-Encoding": "gzip"},
         )
+        _session_loop = loop
     return _session
 
 
 async def fetch_json(url: str) -> Any:
-    """Fetch and cache one JSON payload. Memory, then disk, then the network."""
-    global _outbound
-
+    """Fetch one JSON payload. Memory, then disk, then a coalesced request."""
     if url in _memory:
+        _memory.move_to_end(url)
         return _memory[url]
 
     cached = _read_disk(url)
     if cached is not None:
-        _memory[url] = cached
+        _remember(url, cached)
         return cached
+
+    if _missing_path(url).exists():
+        raise NotFound(url)
+
+    existing = _inflight.get(url)
+    if existing is not None:
+        return await asyncio.shield(existing)
+
+    task = asyncio.ensure_future(_fetch_uncached(url))
+    _inflight[url] = task
+    try:
+        return await asyncio.shield(task)
+    finally:
+        # Only the originator clears the slot, and only once the task is done,
+        # so a second caller arriving mid-flight still finds it.
+        if task.done():
+            _inflight.pop(url, None)
+
+
+async def _fetch_uncached(url: str) -> Any:
+    global _outbound
 
     try:
         async with SEM:
             _outbound += 1
             async with _get_session().get(url) as resp:
                 if resp.status == 404:
+                    _mark_missing(url)
                     raise NotFound(url)
                 resp.raise_for_status()
                 payload = await resp.json(content_type=None)
@@ -150,9 +213,17 @@ async def fetch_json(url: str) -> Any:
     except aiohttp.ClientError as exc:
         raise Unavailable(f"Could not fetch {url}: {exc}") from exc
 
-    _memory[url] = payload
+    _remember(url, payload)
     _write_disk(url, payload)
     return payload
+
+
+def _mark_missing(url: str) -> None:
+    try:
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        _missing_path(url).touch()
+    except OSError:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -186,7 +257,9 @@ async def gene_variants_anc_payload(ensg: str, pheno_idx: int | None, split: boo
 
 
 async def close() -> None:
-    global _session
+    global _session, _session_loop
+    _inflight.clear()
     if _session and not _session.closed:
         await _session.close()
     _session = None
+    _session_loop = None
