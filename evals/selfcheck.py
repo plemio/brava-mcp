@@ -42,7 +42,7 @@ async def paths() -> dict[str, list]:
         "q06": [server.top_associations(max_p=1.39e-7, group_by="gene", limit=1)],
         "q07": [server.catalog("phenotypes")],
         "q08": [server.top_associations(max_p=1e-4, limit=1, offset=29)],
-        "q09": [server.gene_variants("PCSK9", "LDLC", limit=1)],
+        "q09": [server.variants("LDLC", gene="PCSK9", limit=1)],
         "q10": [server.gene_associations("PCSK9", mask="synonymous", maf="<0.1%", limit=1)],
     }
 

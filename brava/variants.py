@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .constants import ANCESTRIES, NON_EUR_BIT, SUPERPOPS, p_from_lp, tier
+from .constants import ANCESTRIES, CHROMS, NON_EUR_BIT, SUPERPOPS, p_from_lp, tier
 from .query import _sig, ci95, effect_label, format_pvalues
 
 GNOMAD_URL = "https://gnomad.broadinstitute.org/variant/{v}?dataset=gnomad_r4"
@@ -188,3 +188,49 @@ def _at(slice_: dict, key: str, i: int) -> Any:
     if not isinstance(col, list) or i >= len(col):
         return None
     return col[i]
+
+
+def overview_rows(
+    payload: dict,
+    genes: dict,
+    trait_type: str,
+    *,
+    max_p: float | None,
+    chrom: str | None = None,
+) -> list[dict[str, Any]]:
+    """Rank a trait's genome-wide variant scan.
+
+    This file is the only variant-level entry point that does not go through a
+    gene, which is what makes "the strongest single variants for this trait"
+    answerable at all. Note the chromosome is an integer index here and a string
+    everywhere else in the corpus.
+    """
+    out: list[dict[str, Any]] = []
+    n = payload.get("n", 0)
+    for i in range(n):
+        p = p_from_lp(payload["lp"][i])
+        if max_p is not None and p is not None and p > max_p:
+            continue
+        ci = payload["chr"][i]
+        name = CHROMS[ci] if 0 <= ci < len(CHROMS) else str(ci)
+        if chrom is not None and name != str(chrom).replace("chr", ""):
+            continue
+        gi = payload["gene_idx"][i]
+        beta = payload["beta"][i]
+        vid = f'{name}-{payload["pos"][i]}-{payload["ref"][i]}-{payload["alt"][i]}'
+        out.append(
+            {
+                "variant": vid,
+                "chr": name,
+                "pos": payload["pos"][i],
+                "gene": (genes["symbols"][gi] or genes["ids"][gi]) if gi >= 0 else "",
+                "p": p,
+                "tier": tier(p),
+                "beta": _sig(beta),
+                "effect": effect_label(beta, trait_type),
+                "ancestries": decode_anc_mask(_at(payload, "anc_mask", i)),
+                "gnomad": GNOMAD_URL.format(v=vid),
+            }
+        )
+    out.sort(key=lambda r: (r["p"] is None, r["p"]))
+    return format_pvalues(out)

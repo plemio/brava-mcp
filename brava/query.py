@@ -323,6 +323,7 @@ def all_results_rows(
     *,
     pheno_idx: int | None = None,
     gene_idx: int | None = None,
+    gene_idxs: set[int] | None = None,
     mask_idx: int | None = None,
     maf_idx: int | None = None,
     test_idx: int | None = None,
@@ -352,6 +353,8 @@ def all_results_rows(
         if pheno_idx is not None and payload["pheno_idx"][i] != pheno_idx:
             continue
         if gene_idx is not None and payload["gene_idx"][i] != gene_idx:
+            continue
+        if gene_idxs is not None and payload["gene_idx"][i] not in gene_idxs:
             continue
         if mask_idx is not None and payload["mask_idx"][i] != mask_idx:
             continue
@@ -392,6 +395,68 @@ def all_results_rows(
 
     out.sort(key=lambda r: (r["p"] is None, r["p"]))
     return format_pvalues(out) if format_p else out
+
+
+def significant_pairs(payload: dict, max_p: float, test_idx: int) -> set[tuple[int, int]]:
+    """(gene, trait) pairs clearing `max_p` in one ancestry shard.
+
+    The building block for "significant here but not there": the shards only hold
+    rows past the suggestive cutoff, so absence from this set means the pair did
+    not clear `max_p` in that stratum. Absence is NOT the same as "tested and
+    null" when the stratum was never analysed for that trait, which is why the
+    caller checks the trait's ancestry list before reporting a contrast.
+    """
+    out: set[tuple[int, int]] = set()
+    for i in range(payload["n"]):
+        if payload["test_idx"][i] != test_idx:
+            continue
+        if p_from_lp(payload["lp"][i]) > max_p:
+            continue
+        out.add((payload["gene_idx"][i], payload["pheno_idx"][i]))
+    return out
+
+
+def biobank_contributions(
+    sizes: dict,
+    biobanks: list[dict],
+    trait_id: str,
+) -> list[dict[str, Any]]:
+    """Who actually contributed to one trait's analysis, and how much.
+
+    BRaVa's whole claim is that a finding held across ten independent biobanks,
+    so "which cohorts are behind this number" is not trivia: it is the question
+    that separates a replicated result from one carried by a single cohort.
+    Rolls the per-(trait, superpopulation, biobank) sizes up per biobank, keeping
+    the ancestry breakdown inline rather than as 50 near-empty rows.
+    """
+    by_pop = sizes.get(trait_id) or {}
+    names = {b["id"]: b for b in biobanks}
+    rolled: dict[str, dict[str, Any]] = {}
+
+    for pop, entries in by_pop.items():
+        for entry in entries:
+            row = rolled.setdefault(
+                entry["id"],
+                {
+                    "biobank": names.get(entry["id"], {}).get("name", entry["id"]),
+                    "country": names.get(entry["id"], {}).get("country", ""),
+                    "n": 0,
+                    "cases": 0,
+                    "_pops": [],
+                },
+            )
+            row["n"] += entry.get("n") or 0
+            row["cases"] += entry.get("case") or 0
+            row["_pops"].append(f"{pop} {entry.get('n') or 0:,}")
+
+    out = list(rolled.values())
+    for row in out:
+        row["ancestries"] = "; ".join(sorted(row.pop("_pops")))
+        if not row["cases"]:
+            # Quantitative trait: a case count of zero is absence, not a measurement.
+            row.pop("cases")
+    out.sort(key=lambda r: -r["n"])
+    return out
 
 
 # ---------------------------------------------------------------------------

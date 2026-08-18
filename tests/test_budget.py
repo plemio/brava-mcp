@@ -92,3 +92,27 @@ class TestAggregationPath:
         out = await server.top_associations(group_by="chromosome")
         assert "error" in out
         assert "'gene'" in out and "'trait'" in out
+
+
+class TestNoRawPValueEverEscapes:
+    """A p-value serialised as a literal decimal costs ~170 characters.
+
+    Three separate code paths have shipped this bug now, each time because a new
+    row builder forgot the formatting pass. This asserts the property across
+    every tool at once, so the next builder is covered whether or not whoever
+    writes it remembers.
+    """
+
+    async def test_no_tool_emits_an_expanded_decimal(self):
+        outputs = [
+            await server.gene_associations("PCSK9", limit=3),
+            await server.phenotype_associations("LDLC", limit=3),
+            await server.gene_phenotype_detail("PCSK9", "LDLC"),
+            await server.top_associations(limit=3),
+            await server.top_associations(group_by="gene", limit=3),
+            await server.variants("LDLC", max_p=1e-40, limit=3),
+            await server.variants("LDLC", gene="PCSK9", limit=3),
+            await server.catalog("vocabulary"),
+        ]
+        for blob in outputs:
+            assert "0.0000000000" not in blob, blob[:200]

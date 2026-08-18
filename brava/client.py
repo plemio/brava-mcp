@@ -256,6 +256,16 @@ async def gene_variants_anc_payload(ensg: str, pheno_idx: int | None, split: boo
     return await fetch_json(f"{VARIANT_BASE}/variant/gene/{name}.anc.json")
 
 
+async def variant_overview_payload(pheno_id: str) -> dict:
+    """v2/variant/overview/{PHENO}.json holds the genome-wide variant scan.
+
+    Pixel-decimated by upstream: everything at or above `keep_lp` is kept at full
+    resolution and the null band is thinned, so this is a ranking of real signal,
+    not a complete variant list.
+    """
+    return await fetch_json(f"{VARIANT_BASE}/variant/overview/{pheno_id}.json")
+
+
 async def close() -> None:
     global _session, _session_loop
     _inflight.clear()

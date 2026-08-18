@@ -21,9 +21,27 @@ Summary statistics only. **Not for clinical use.**
 | `gene_associations` | Phenome-wide scan: which traits is this gene associated with? |
 | `phenotype_associations` | Which genes carry rare-variant signal for this trait? |
 | `gene_phenotype_detail` | Does this hit replicate across ancestries and biobanks? |
-| `top_associations` | Strongest signals across traits, and pleiotropy: which genes hit the most traits (`group_by`) |
-| `gene_variants` | The individual variants driving a signal, with per-biobank concordance |
-| `catalog` | The 44 traits, the contributing biobanks, the analysis vocabulary |
+| `top_associations` | Everything cross-cutting, in one call: strongest signals overall, pleiotropy (`group_by`), candidate-list screening (`genes`), and ancestry-specific findings (`absent_in`) |
+| `variants` | Single variants, genome-wide for a trait or inside one gene, with per-biobank concordance |
+| `catalog` | The 44 traits, the analysis vocabulary, and which cohorts carried a given trait (`trait`) |
+
+### The queries that are one call rather than sixteen
+
+The per-file layout upstream answers "this gene" and "this trait" well and
+anything cross-cutting badly, so those compositions live in the server:
+
+```
+top_associations(group_by="gene")                  # most pleiotropic genes
+top_associations(genes="PCSK9,LDLR,APOB")          # screen a candidate list
+top_associations(ancestry="AFR", absent_in="EUR")  # what a EUR-only study missed
+catalog(kind="biobanks", trait="T2Diab")           # who contributed, and how much
+variants("LDLC")                                   # strongest variants, no gene needed
+```
+
+The ancestry contrast is the one to reach for when the question is why the
+consortium exists: 27 gene-trait findings clear the gene-level threshold in AFR
+and not in EUR. Where a stratum was never analysed for a trait, the response says
+so rather than passing missing data off as a null result.
 
 Every tool is read-only and capped at a 25,000-character response. The five that
 return ranked rows page with `offset`/`next_offset`; `search` and `catalog` return

@@ -42,7 +42,7 @@ class TestPCSK9LowersLDL:
         await client.close()
 
     async def test_variant_level_reproduces_the_gene_level_direction(self):
-        out = await server.gene_variants("PCSK9", "LDLC", max_p=1e-8, limit=5)
+        out = await server.variants("LDLC", gene="PCSK9", max_p=1e-8, limit=5)
         assert "lowers" in out
         assert "concordant" in out
         await client.close()

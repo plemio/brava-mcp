@@ -471,7 +471,8 @@ async def top_associations(
     ancestry: str = DEFAULT_ANCESTRY,
     category: str | None = None,
     trait_type: str | None = None,
-    gene: str | None = None,
+    genes: str | None = None,
+    absent_in: str | None = None,
     mask: str | None = None,
     test: str = DEFAULT_TEST,
     max_p: float = SIG_GENE_CAUCHY,
@@ -492,7 +493,14 @@ async def top_associations(
         category: Trait category filter, e.g. "Cardiovascular", "Lipids",
             "Endocrine/Metabolic" (see catalog(kind='phenotypes')).
         trait_type: "binary" or "quantitative".
-        gene: Restrict to one gene. The fast way to ask which traits it hits.
+        genes: Restrict to one gene or a comma-separated set ("PCSK9,LDLR,APOB").
+            The way to screen a candidate list in a single call instead of one
+            call per gene.
+        absent_in: Return only findings that clear the threshold in `ancestry`
+            but NOT in this stratum, e.g. ancestry="AFR", absent_in="EUR" for
+            signals a European-only study would have missed. Ancestry-specific
+            effects are the reason the consortium exists, and this is the query
+            for them.
         mask: Variant annotation mask. Omit for all.
         test: Burden, SKAT, SKAT-O (default SKAT-O).
         max_p: p-value ceiling, default 2.5e-6 (the gene-level threshold).
@@ -525,11 +533,29 @@ async def top_associations(
     if anc_idx is None:
         return _err(f"An ancestry is required. Valid: {', '.join(ANCESTRIES)}")
 
-    gidx = None
-    if gene:
-        gidx = ix.resolve_gene(gene)
-        if gidx is None:
-            return _err(f"Unknown gene '{gene}'. Call search('{gene}').")
+    gene_idxs = None
+    if genes:
+        wanted = [g.strip() for g in genes.split(",") if g.strip()]
+        resolved = {g: ix.resolve_gene(g) for g in wanted}
+        unknown = [g for g, i in resolved.items() if i is None]
+        if unknown:
+            return _err(
+                f"Unknown gene(s): {', '.join(unknown)}. Call search() on each, or "
+                "pass Ensembl ids."
+            )
+        gene_idxs = set(resolved.values())
+
+    absent_idx = None
+    if absent_in:
+        try:
+            absent_idx = ix.resolve_ancestry(absent_in)
+        except ValueError as exc:
+            return _err(str(exc))
+        if absent_idx == anc_idx:
+            return _err(
+                f"absent_in must differ from ancestry (both are '{absent_in}'). "
+                "Use e.g. ancestry='AFR', absent_in='EUR'."
+            )
 
     # Aggregation sorts on p, so it needs the numeric value: formatting first
     # would make it compare "1.00e-08" against "9.99e-300" as strings.
@@ -537,7 +563,7 @@ async def top_associations(
         ix.all_results(ANCESTRIES[anc_idx]),
         ix.genes(),
         ix.phenotypes(),
-        gene_idx=gidx,
+        gene_idxs=gene_idxs,
         mask_idx=mask_idx,
         test_idx=TEST_INDEX[test_name],
         category=category,
@@ -551,6 +577,35 @@ async def top_associations(
             "traits they hit) or 'trait' (rank traits by how many genes reach the "
             "threshold). Omit it for the flat association list."
         )
+
+    contrast_note = None
+    if absent_idx is not None:
+        other = ANCESTRIES[absent_idx]
+        seen = q.significant_pairs(
+            ix.all_results(other), max_p, TEST_INDEX[test_name]
+        )
+        phenos = ix.phenotypes()
+        untested = set()
+        kept = []
+        for row in rows:
+            pi = next(
+                i for i, ph in enumerate(phenos) if ph["id"] == row["trait_id"]
+            )
+            gi = ix.resolve_gene(row["ensg"])
+            if (gi, pi) in seen:
+                continue
+            if other not in phenos[pi]["ancestries"]:
+                untested.add(row["trait_id"])
+            kept.append(row)
+        rows = kept
+        contrast_note = (
+            f"Clears p<{max_p} in {ANCESTRIES[anc_idx]} and not in {other}."
+        )
+        if untested:
+            contrast_note += (
+                f" Careful: {other} was never analysed for {', '.join(sorted(untested))}, "
+                "so for those the absence is missing data, not a null result."
+            )
 
     total = len(rows)
     # Aggregation needs one row per pair, so the dedupe is not optional there.
@@ -572,6 +627,7 @@ async def top_associations(
         "total_matching": total,
         "distinct_pairs": pairs,
         "grouped_by": group_by,
+        "contrast": contrast_note,
         "results": rows[offset : offset + limit],
         "note": f"{BETA_NOTE} {DISCLAIMER}",
     }
@@ -581,40 +637,86 @@ async def top_associations(
 
 
 @mcp.tool(annotations=READ_ONLY)
-async def gene_variants(
-    gene: str,
+async def variants(
     phenotype: str,
+    gene: str | None = None,
     ancestry: str = DEFAULT_ANCESTRY,
+    chrom: str | None = None,
     max_p: float | None = None,
     limit: int = 25,
     offset: int = 0,
 ) -> str:
-    """Single-variant results inside a gene, with per-biobank replication.
+    """Single-variant results for a trait, genome-wide or inside one gene.
 
-    Drops from gene-level burden testing down to the individual variants driving
-    a signal. Each row carries the per-biobank effect-direction tally, the
-    cross-biobank replication evidence no single-programme browser can show,
-    plus a gnomAD link per variant, where population allele frequencies live.
+    Drops from gene-level burden testing to the individual variants carrying a
+    signal. Without `gene` this ranks the whole genome for the trait, which is
+    the only way in that does not require knowing the gene first; with `gene` it
+    restricts to that gene and additionally reports the per-biobank
+    effect-direction tally, the cross-biobank replication evidence.
+
+    Each row links to gnomAD, where population allele frequencies live.
 
     Args:
-        gene: Gene symbol or Ensembl id.
         phenotype: Trait id or name.
+        gene: Restrict to one gene. Omit for the genome-wide scan.
         ancestry: All (cross-ancestry meta, default) or a specific stratum.
-        max_p: p-value ceiling. The variant-level significance threshold is 1.82e-8.
+            Only meaningful together with `gene`.
+        chrom: Restrict the genome-wide scan to one chromosome ("2", "X").
+        max_p: p-value ceiling. The variant-level threshold is 1.82e-8.
         limit: Max rows (default 25).
         offset: Skip this many rows, to page through a long result set.
 
-    Returns: variant (chr-pos-ref-alt), p-value, beta with 95% CI, effect
-    direction, effective sample size, I-squared, heterogeneity p, the ancestries
-    it was observed in, the per-biobank direction string, and a gnomAD link.
+    Returns: variant (chr-pos-ref-alt), gene, p-value, beta, effect direction,
+    the ancestries it was seen in, and a gnomAD link. Within a gene, also the
+    95% CI, effective sample size, I-squared, heterogeneity p and the per-biobank
+    direction string.
     """
     limit = max(1, min(limit, 200))
-    gidx = ix.resolve_gene(gene)
-    if gidx is None:
-        return _err(f"Unknown gene '{gene}'. Call search('{gene}').")
     pidx = ix.resolve_phenotype(phenotype)
     if pidx is None:
         return _err(f"Unknown trait '{phenotype}'. Call catalog(kind='phenotypes').")
+    pheno = ix.phenotypes()[pidx]
+
+    # ---- genome-wide scan -------------------------------------------------
+    if gene is None:
+        if ancestry and ancestry != DEFAULT_ANCESTRY:
+            return _err(
+                "The genome-wide variant scan is published for the cross-ancestry "
+                f"meta only. Pass a gene to see {ancestry} strata, or drop ancestry."
+            )
+        try:
+            payload = await client.variant_overview_payload(pheno["id"])
+        except client.NotFound:
+            return _err(
+                f"No genome-wide variant scan published for {pheno['name']}. "
+                f"Pass a gene to get its variants, or use "
+                f"phenotype_associations('{pheno['id']}') for gene-level results."
+            )
+        except client.Unavailable as exc:
+            return _err(f"Variant-level data is temporarily unreachable: {exc}")
+
+        rows = vq.overview_rows(
+            payload, ix.genes(), pheno["type"], max_p=max_p, chrom=chrom
+        )
+        out = {
+            "trait": pheno["name"],
+            "trait_id": pheno["id"],
+            "type": pheno["type"],
+            "scope": f"genome-wide{f' (chr{chrom})' if chrom else ''}",
+            "variant_significance_threshold": SIG_VARIANT,
+            "total_matching": len(rows),
+            "results": rows[offset : offset + limit],
+            "note": f"Upstream thins the null band of this scan, so it ranks real "
+            f"signal rather than listing every variant tested. {BETA_NOTE} {DISCLAIMER}",
+        }
+        if offset + limit < len(rows):
+            out["next_offset"] = offset + limit
+        return _emit(out, narrow="max_p= or chrom=", offset=offset)
+
+    # ---- within one gene --------------------------------------------------
+    gidx = ix.resolve_gene(gene)
+    if gidx is None:
+        return _err(f"Unknown gene '{gene}'. Call search('{gene}').")
 
     try:
         anc_idx = ix.resolve_ancestry(ancestry)
@@ -624,7 +726,6 @@ async def gene_variants(
         return _err(f"An ancestry is required. Valid: {', '.join(ANCESTRIES)}")
 
     info = ix.gene_info(gidx)
-    pheno = ix.phenotypes()[pidx]
     split = info["ensg"] in ix.variant_split()
     anc_name = ANCESTRIES[anc_idx]
 
@@ -677,37 +778,44 @@ async def gene_variants(
             }
         )
 
-    return _emit(
-        {
-            "gene": info["gene"],
-            "ensg": info["ensg"],
-            "trait": pheno["name"],
-            "type": pheno["type"],
-            "ancestry": ANCESTRY_LABEL[anc_name],
-            "variant_significance_threshold": SIG_VARIANT,
-            "total_matching": len(rows),
-            "results": rows[offset : offset + limit],
-            "next_offset": offset + limit if offset + limit < len(rows) else None,
-            "note": f"'biobanks' counts concordant effect directions across contributing "
-            f"cohorts; '?' marks a cohort where the variant was absent. "
-            f"{BETA_NOTE} {DISCLAIMER}",
-        },
-        narrow="a smaller max_p",
-        offset=offset,
-    )
+    out = {
+        "gene": info["gene"],
+        "ensg": info["ensg"],
+        "trait": pheno["name"],
+        "type": pheno["type"],
+        "ancestry": ANCESTRY_LABEL[anc_name],
+        "variant_significance_threshold": SIG_VARIANT,
+        "total_matching": len(rows),
+        "results": rows[offset : offset + limit],
+        "note": f"'biobanks' counts concordant effect directions across contributing "
+        f"cohorts; '?' marks a cohort where the variant was absent. "
+        f"{BETA_NOTE} {DISCLAIMER}",
+    }
+    if offset + limit < len(rows):
+        out["next_offset"] = offset + limit
+    if (amb := _ambiguity_note(gene, gidx)):
+        out["warning"] = amb
+    return _emit(out, narrow="a smaller max_p", offset=offset)
 
 
 @mcp.tool(annotations=READ_ONLY)
-async def catalog(kind: str = "phenotypes") -> str:
+async def catalog(kind: str = "phenotypes", trait: str | None = None) -> str:
     """What BRaVa covers: traits, contributing biobanks, or the analysis vocabulary.
 
     Call this before guessing a trait id, or to ground a statement about study
     design (sample sizes, ancestry composition, significance thresholds).
 
+    With kind="biobanks" and a trait, returns which cohorts actually contributed
+    to THAT trait's analysis and how many participants and cases each brought.
+    That is the question behind any claim of cross-biobank replication: a result
+    resting on one large cohort is a different result from one seen in eight.
+
     Args:
         kind: "phenotypes" (the 44 traits with sample sizes per ancestry),
             "biobanks" (the contributing cohorts), or "vocabulary" (masks, MAF
             cutoffs, tests and significance thresholds).
+        trait: With kind="biobanks", restrict to one trait and report each
+            cohort's contribution to it, broken down by ancestry.
 
     Returns: the requested catalogue.
     """
@@ -733,6 +841,34 @@ async def catalog(kind: str = "phenotypes") -> str:
         return _emit({"traits": rows, "total": len(rows), "note": DISCLAIMER}, "traits")
 
     if kind in ("biobanks", "biobank", "cohorts"):
+        if trait:
+            tidx = ix.resolve_phenotype(trait)
+            if tidx is None:
+                return _err(
+                    f"Unknown trait '{trait}'. Call catalog(kind='phenotypes') for the "
+                    "44 traits BRaVa covers."
+                )
+            pheno = ix.phenotypes()[tidx]
+            rows = q.biobank_contributions(ix.pheno_sizes(), ix.biobanks(), pheno["id"])
+            if not rows:
+                return _err(
+                    f"No per-biobank breakdown published for {pheno['name']}. "
+                    "catalog(kind='biobanks') gives each cohort's overall size."
+                )
+            return _emit(
+                {
+                    "trait": pheno["name"],
+                    "trait_id": pheno["id"],
+                    "type": pheno["type"],
+                    "contributing_biobanks": len(rows),
+                    "biobanks": rows,
+                    "note": "Per-biobank sizes cover the five superpopulations only; "
+                    "the cross-ancestry meta totals in catalog(kind='phenotypes') "
+                    "are the authoritative overall N.",
+                },
+                "biobanks",
+            )
+
         rows = [
             {
                 "id": b["id"],

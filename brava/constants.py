@@ -89,6 +89,10 @@ SIG_VARIANT = 1.82e-8               # variant-level, 0.05 / 2,746,957
 # represent", not "missing".
 LP_FLOOR = 323.3062153431158
 
+# The variant overview stores the chromosome as an INDEX, unlike every other
+# file, where it is the string. Order per upstream build_variants.py.
+CHROMS: list[str] = [str(i) for i in range(1, 23)] + ["X", "Y"]
+
 DEFAULT_ANCESTRY = "All"
 DEFAULT_TEST = "SKAT-O"
 PAPER_URL = "https://www.medrxiv.org/content/10.64898/2026.05.21.26353759v1.full"
