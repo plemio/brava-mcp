@@ -10,12 +10,9 @@ Summary statistics only. **Not for clinical use.**
 ## It ships the table, not a wrapper around it
 
 The gene-level results are a single flat fact table, and a model already writes
-SQL at expert level. So the server ships the table.
-
-An earlier version exposed seven hand-carved tools whose parameters (`group_by`,
-`absent_in`, `genes=`, `collapse`) were each a SQL clause reimplemented worse,
-one review cycle at a time, while every question nobody had anticipated stayed
-out of reach. `query` removes that ceiling: 61,791,444 rows, locally, no network.
+SQL at expert level, so `query` hands it over: 61,791,444 rows, locally, no
+network. Any question is a query, including the ones a fixed set of tools would
+never have anticipated.
 
 ```sql
 -- what does this gene do
