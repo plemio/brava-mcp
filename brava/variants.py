@@ -107,9 +107,10 @@ def variant_rows(
             "se": _sig(se),
             "effect": effect_label(beta, trait_type),
         }
+        # Unconditional: see the same fix in query._stat_columns. No degenerate
+        # variant row exists in the data today, so this is prevention, not a fix.
         ci = ci95(beta, se)
-        if ci:
-            row["ci95"] = f"{_sig(ci[0])} to {_sig(ci[1])}"
+        row["ci95"] = f"{_sig(ci[0])} to {_sig(ci[1])}" if ci else ""
         row["n_eff"] = _at(sl, "ne", k)
         row["cases"] = _at(sl, "nc", k)
         row["i2"] = _at(sl, "i2", k)
@@ -169,9 +170,10 @@ def ancestry_rows(
             "i2": _at(sl, "i2", k),
             "het_p": p_from_lp(_at(sl, "cq", k)),
         }
+        # Unconditional: see the same fix in query._stat_columns. No degenerate
+        # variant row exists in the data today, so this is prevention, not a fix.
         ci = ci95(beta, se)
-        if ci:
-            row["ci95"] = f"{_sig(ci[0])} to {_sig(ci[1])}"
+        row["ci95"] = f"{_sig(ci[0])} to {_sig(ci[1])}" if ci else ""
         out.append(row)
 
     out.sort(key=lambda r: (r["p"] is None, r["p"]))

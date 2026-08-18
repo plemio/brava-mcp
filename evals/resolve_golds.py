@@ -82,9 +82,15 @@ def main() -> None:
             per_bank[entry["id"]] = per_bank.get(entry["id"], 0) + (entry.get("case") or 0)
     top_bank = max(per_bank.items(), key=lambda kv: kv[1])
 
-    # Candidate screen: PCSK9 clears the Cauchy line, ACAN and TTN do not.
+    # Candidate screen. EVERY candidate in the question is computed, including
+    # the one expected to clear: hardcoding it as a fallback would mean the gold
+    # no longer depends on the data, which is the whole point of this file.
     gene_p = {}
-    for symbol, ensg in (("ACAN", "ENSG00000157766"), ("TTN", "ENSG00000155657")):
+    for symbol, ensg in (
+        ("PCSK9", "ENSG00000169174"),
+        ("ACAN", "ENSG00000157766"),
+        ("TTN", "ENSG00000155657"),
+    ):
         payload = get(f"{DATA}/gene/{ensg}.json")
         # NOT named `best`: that binds the (gene, trait) -> p map above, and
         # shadowing it here would silently corrupt every other gold.
@@ -114,8 +120,14 @@ def main() -> None:
                and p_of(payload["lp_skato"][i]) < 0.05]
         return len(sig), len(strata)
 
+    # All five genes the question names, not a sample of them.
     rep = {s: concordance(e) for s, e in (
-        ("PCSK9", "ENSG00000169174"), ("ANGPTL3", "ENSG00000132855"))}
+        ("PCSK9", "ENSG00000169174"),
+        ("LDLR", "ENSG00000130164"),
+        ("APOB", "ENSG00000084674"),
+        ("ANGPTL3", "ENSG00000132855"),
+        ("ABCG5", "ENSG00000138075"),
+    )}
 
     # Ancestry contrast, counted as DISTINCT gene-trait pairs, which is what the
     # question asks and what the default (collapsed) response reports.
@@ -145,9 +157,11 @@ def main() -> None:
         "q09": f'{variants["chr"]}-{variants["pos"][vi]}-{variants["ref"][vi]}-{variants["alt"][vi]}',
         "q10": "no" if syn_p >= 2.5e-6 else "yes",
         "q11": f"{banks[top_bank[0]]} / {top_bank[1]}",
-        "q12": " ".join(sorted(screened)) if screened else "PCSK9",
-        "q13": f"PCSK9 {rep['PCSK9'][0]}/{rep['PCSK9'][1]}; "
-               f"ANGPTL3 {rep['ANGPTL3'][0]}/{rep['ANGPTL3'][1]}",
+        "q12": " ".join(sorted(screened)),
+        "q13": "; ".join(
+            f"{g} {rep[g][0]}/{rep[g][1]}"
+            for g in ("PCSK9", "LDLR", "APOB", "ANGPTL3", "ABCG5")
+        ),
         "q14": str(contrast),
     }
 

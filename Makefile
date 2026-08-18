@@ -11,7 +11,7 @@ help:
 	@echo "sync         install dependencies"
 	@echo "test         offline suite (no network)"
 	@echo "test-all     offline + live-data suite"
-	@echo "eval         10 benchmark questions against fixed gold answers"
+	@echo "eval         14 benchmark questions against independently derived answers"
 	@echo "serve        run the HTTP daemon on MCP_PORT (default 3163)"
 	@echo "refresh-meta re-download the bundled metadata indexes"
 

@@ -427,10 +427,12 @@ async def phenotype_associations(
     if offset + limit < len(rows):
         out["next_offset"] = offset + limit
     if screening:
-        shown = {r["gene"] for r in rows} | {r["ensg"] for r in rows}
+        # Identity is the ENSG, never the symbol: 25 symbols are shared by more
+        # than one Ensembl gene, so matching on "NOX5" lets an untested twin be
+        # covered by its tested namesake and vanish from the screen.
+        shown = {r["ensg"] for r in rows}
         absent = [
-            g for g in wanted
-            if g not in shown and ix.gene_info(resolved[g])["gene"] not in shown
+            g for g in wanted if ix.gene_info(resolved[g])["ensg"] not in shown
         ]
         if absent:
             # Never let a candidate vanish from a screen: silence reads as "not
@@ -491,6 +493,13 @@ async def gene_phenotype_detail(
     unknown = [g for g, i in resolved.items() if i is None]
     if unknown:
         return _err(f"Unknown gene(s): {', '.join(unknown)}. Call search() on each.")
+    # "PCSK9,ENSG00000169174" names one gene twice; screening it twice would
+    # report it twice and inflate the count.
+    seen_idx: set[int] = set()
+    resolved = {
+        g: i for g, i in resolved.items() if not (i in seen_idx or seen_idx.add(i))
+    }
+    wanted = list(resolved)
 
     pidx = ix.resolve_phenotype(phenotype)
     if pidx is None:
@@ -507,7 +516,7 @@ async def gene_phenotype_detail(
 
     pheno = ix.phenotypes()[pidx]
 
-    unreachable: list[str] = []
+    unreachable_idx: set[int] = set()
 
     async def forest_for(idx: int) -> dict | None:
         """None means "no results for this gene"; an outage is recorded apart.
@@ -521,7 +530,7 @@ async def gene_phenotype_detail(
         except client.NotFound:
             return None
         except client.Unavailable:
-            unreachable.append(info["gene"])
+            unreachable_idx.add(idx)
             return None
         return q.forest(
             payload, pheno, pheno_idx=pidx, mask_idx=mask_idx,
@@ -538,9 +547,15 @@ async def gene_phenotype_detail(
             for (idx, res) in zip(resolved.values(), results)
             if res and res["strata"]
         ]
+        # Partitioned on the resolved INDEX, not on what the caller typed: with
+        # "pcsk9" or an Ensembl id, comparing strings put the same gene in both
+        # buckets and one response claimed it had no results AND was unreachable.
         missing = [
-            g for g, res in zip(resolved, results) if not res or not res["strata"]
+            ix.gene_info(idx)["gene"]
+            for (idx, res) in zip(resolved.values(), results)
+            if idx not in unreachable_idx and (not res or not res["strata"])
         ]
+        unreachable = [ix.gene_info(i)["gene"] for i in sorted(unreachable_idx)]
         if not pairs:
             if unreachable:
                 return _err(
@@ -566,7 +581,6 @@ async def gene_phenotype_detail(
             "this tool with a single gene for its full per-ancestry forest.",
             "note": f"{BETA_NOTE} {DISCLAIMER}",
         }
-        missing = [g for g in missing if g not in unreachable]
         if missing:
             out["no_result"] = ", ".join(missing)
         if unreachable:
@@ -583,7 +597,7 @@ async def gene_phenotype_detail(
     info = ix.gene_info(gidx)
     result = await forest_for(gidx)
     if result is None:
-        if unreachable:
+        if unreachable_idx:
             return _err(
                 f"BRaVa data is temporarily unreachable for {info['gene']}. A fetch "
                 "failure, not an absence of results; retry."
@@ -851,7 +865,7 @@ async def variants(
             "trait_id": pheno["id"],
             "type": pheno["type"],
             "scope": f"genome-wide{f' (chr{chrom})' if chrom else ''}",
-            "variant_significance_threshold": SIG_VARIANT,
+            "variant_significance_threshold": q.fmt_p(SIG_VARIANT),
             "total_matching": len(rows),
             "results": rows[offset : offset + limit],
             "note": f"Upstream thins the null band of this scan, so it ranks real "
@@ -932,7 +946,7 @@ async def variants(
         "trait": pheno["name"],
         "type": pheno["type"],
         "ancestry": ANCESTRY_LABEL[anc_name],
-        "variant_significance_threshold": SIG_VARIANT,
+        "variant_significance_threshold": q.fmt_p(SIG_VARIANT),
         "total_matching": len(rows),
         "results": rows[offset : offset + limit],
         "note": f"'biobanks' counts concordant effect directions across contributing "

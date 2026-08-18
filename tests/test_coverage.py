@@ -120,6 +120,27 @@ class TestAncestrySpecificDiscovery:
             assert "unreachable" in out
             assert "has no BRaVa results" not in out
 
+    async def test_a_partial_outage_on_non_canonical_input_is_not_double_reported(self):
+        # The gene is identified by the resolved index, not by what the caller
+        # typed: comparing strings put "pcsk9" in no_result and "PCSK9" in
+        # unreachable, so one response said both at once and a model reading the
+        # first line concluded biology from a network error.
+        original = client.gene_payload
+
+        async def selective(ensg, *args, **kwargs):
+            if ensg == "ENSG00000169174":
+                raise client.Unavailable("simulated partial outage")
+            return await original(ensg, *args, **kwargs)
+
+        client.gene_payload = selective
+        try:
+            out = await server.gene_phenotype_detail("pcsk9,LDLR", "LDLC")
+        finally:
+            client.gene_payload = original
+        assert "unreachable" in out
+        assert "no_result" not in out
+        assert "LDLR" in out
+
 
 class TestGenomeWideVariantScan:
     """"What are the strongest single variants for this trait?"
@@ -231,13 +252,21 @@ class TestCandidateScreening:
         assert "ns" in out
 
     async def test_a_candidate_with_no_row_at_all_is_named(self):
-        # Silence is the failure mode here: an absent candidate must never be
-        # indistinguishable from one that was tested and found null.
+        # Uses the two Ensembl genes sharing the symbol NOX5, only one of which
+        # was tested. Screening by symbol let the untested twin be covered by
+        # its namesake and disappear; the previous version of this test passed
+        # regardless, because its candidate did have rows.
         out = await server.phenotype_associations(
-            "LDLC", genes="PCSK9,ACAN", mask="pLoF", maf="<0.1%", detailed=True
+            "LDLC", genes="ENSG00000290203,ENSG00000255346", detailed=True
         )
-        assert "PCSK9" in out
-        assert "ACAN" in out or "no_result" in out
+        assert "no_result" in out
+        assert "ENSG00000290203" in out or "ENSG00000255346" in out
+
+    async def test_the_same_gene_named_twice_is_screened_once(self):
+        out = await server.gene_phenotype_detail(
+            "PCSK9,ENSG00000169174", "LDLC"
+        )
+        assert "screened: 2" not in out
 
 
 class TestProvenance:

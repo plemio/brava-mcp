@@ -481,6 +481,10 @@ def _verdict(
     if parsed is None:
         return "unknown"
     agree, total = parsed
+    if total == 0:
+        # No stratum carries an estimate: nothing was compared, so neither
+        # "replicated" nor "not replicated" is a statement the data supports.
+        return "inconclusive (no stratum estimates)"
     same = _split(same_direction)
 
     het = None
@@ -494,7 +498,9 @@ def _verdict(
         base = f"same direction in all {same[1]}, underpowered in {same[1] - agree}"
         return base + (", heterogeneous" if heterogeneous else "")
     if agree == 0:
-        return "not replicated"
+        # Nothing reaches nominal significance anywhere. "Not replicated" would
+        # assert a negative the data cannot carry; it was never tested with power.
+        return "inconclusive (no stratum reaches nominal significance)"
     return f"partial ({concordant})" + (", heterogeneous" if heterogeneous else "")
 
 
@@ -614,9 +620,10 @@ def forest(
             "se": _sig(se),
             "effect": effect_label(beta, pheno["type"]),
         }
+        # Unconditional, like every other optional column: a key that appears
+        # on some rows and not others drops TOON out of its table encoding.
         ci = ci95(beta, se)
-        if ci:
-            row["ci95"] = f"{_sig(ci[0])} to {_sig(ci[1])}"
+        row["ci95"] = f"{_sig(ci[0])} to {_sig(ci[1])}" if ci else ""
         if anc == "All":
             row["p_het"] = p_from_lp(payload["lp_het"][i])
         by_anc[anc] = row

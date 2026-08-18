@@ -158,15 +158,16 @@
   {
     "id": "q13",
     "question": "Among PCSK9, LDLR, APOB, ANGPTL3 and ABCG5 for LDL cholesterol, which replicate in all five superpopulations and which only in some? Give the counts.",
-    "answer": "PCSK9 5/5; ANGPTL3 3/5",
-    "answer_context": "Replication screen. ANGPTL3 lowers LDL in all five superpopulations but reaches nominal significance in only three, which is underpowered rather than discordant, and the tool must say so.",
+    "answer": "PCSK9 5/5; LDLR 5/5; APOB 5/5; ANGPTL3 3/5; ABCG5 3/5",
+    "answer_context": "Replication screen over all five genes the question names. ANGPTL3 and ABCG5 move LDL in all five superpopulations but reach nominal significance in only three, which is underpowered rather than discordant, and the tool must say so rather than call it partial replication.",
     "expected_path": [
       "gene_phenotype_detail(gene='A,B,C,...')"
     ],
     "evidence": [
       "5/5",
       "3/5",
-      "same direction in all 5"
+      "same direction in all 5",
+      "ABCG5"
     ]
   },
   {

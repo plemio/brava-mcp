@@ -102,7 +102,7 @@ the upstream bucket entirely, with no code change.
 make sync                       # install
 make test                       # offline suite
 make test-all                   # + live-data checks (wire contract, known biology)
-make eval                       # 10 benchmark questions with fixed gold answers
+make eval                       # 14 benchmark questions with independently derived answers
 make serve                      # HTTP daemon on :3163
 uv run python server.py         # stdio
 ```

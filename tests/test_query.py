@@ -199,8 +199,20 @@ class TestReplicationVerdict:
     def test_genuinely_split_directions_stay_partial(self):
         assert q._verdict("3/5", 0.4, "4/5") == "partial (3/5)"
 
-    def test_nothing_agreeing_is_not_replicated(self):
-        assert q._verdict("0/5", 0.4, "2/5") == "not replicated"
+    def test_nothing_significant_with_split_directions_is_inconclusive(self):
+        # Not "not replicated": nothing reached nominal significance anywhere, so
+        # the negative was never actually tested with power.
+        assert "inconclusive" in q._verdict("0/5", 0.4, "2/5")
 
     def test_a_missing_count_does_not_invent_a_verdict(self):
         assert q._verdict(None, None, None) == "unknown"
+
+    def test_no_stratum_estimate_at_all_is_inconclusive(self):
+        # "not replicated" asserts a negative; with nothing compared, the data
+        # does not carry it.
+        assert "inconclusive" in q._verdict("0/0", None, "0/0")
+
+    def test_unanimous_direction_beats_the_inconclusive_label(self):
+        # Zero significant but all five pointing the same way is more informative
+        # than "inconclusive", and the wording should say which.
+        assert q._verdict("0/5", 0.4, "5/5") == "same direction in all 5, underpowered in 5"
