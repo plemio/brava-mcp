@@ -76,23 +76,22 @@ with indexes, 1.75 GB without, 0.87 GB sorted. No index is missed, because these
 are filtered scans and DuckDB's zonemaps already serve them. Every query above
 returns in under 70 ms.
 
-## Where the numbers come from, and how they go stale
+## Where the numbers come from
 
-Worth knowing before citing anything from here, because the chain has three links
-and only the first is the consortium's.
+Three links, and only the first belongs to the consortium.
 
-The **results** are the BRaVa consortium's SAIGE-GENE+ meta-analysis output,
-distributed as gzipped TSVs on `gs://brava-meta-analysis` (Requester Pays).
+The **results** are BRaVa's SAIGE-GENE+ meta-analysis output, distributed as
+gzipped TSVs on `gs://brava-meta-analysis` (Requester Pays).
 
-The **derived JSON** this database is built from comes from the browser's ETL,
-which is not a passthrough. It makes four decisions that shape what you read:
+The **published JSON** this database is built from comes from the browser's ETL,
+which is not a passthrough. Four of its decisions shape what you read here:
 
 * The Burden class carries **two** rows per (gene, mask, MAF): a Stouffer row
   with a beta and no standard error, and an inverse-variance-weighted row with
-  the real SE and the heterogeneity test. The ETL keeps IVW. Taking the other
-  would give different betas and no confidence intervals.
-* Gene symbols and coordinates are **not in the results** at all; they are joined
-  from Ensembl 110 (GRCh38).
+  the real SE and the heterogeneity test. The ETL keeps IVW. The other choice
+  would give different betas and no confidence intervals at all.
+* Gene symbols and coordinates are **not in the results**; they are joined from
+  Ensembl 110 (GRCh38).
 * Trait names, categories and the binary/quantitative split are parsed from the
   [BRaVa curation](https://github.com/BRaVa-genetics/BRaVa_curation) repo.
 * SAIGE prints `Pvalue=0` where its own tail computation underflows. The ETL
@@ -101,16 +100,18 @@ which is not a passthrough. It makes four decisions that shape what you read:
 
 So this database inherits an interpretation, not only a set of numbers.
 
-**That gives staleness two sources, not one.** A new consortium data freeze is the
-obvious one and is roughly annual. The other is a fix to the browser's ETL, which
-changes the published JSON with no consortium release behind it: that has
-happened four times so far, twice for accuracy bugs their own test suite caught.
-The second is the one worth watching, because nothing announces it.
+**Republishing is manual.** The browser's only CI workflow builds the SPA and
+deploys the site; it never runs the ETL. The data targets need gsutil
+authenticated against the Requester Pays bucket and rclone configured for the R2
+remote, neither of which exists in CI. The published files therefore change when
+their author re-runs the pipeline, on no announced schedule and with nothing to
+subscribe to.
 
-`data/meta/BUNDLE.json` records the upstream `Last-Modified` the bundle was built
-against, and `evals/resolve_golds.py` re-derives all fourteen benchmark answers
-from the live files and reports drift. That catches a change on fourteen values;
-watching the upstream `pipeline/` commits catches it properly.
+This build corresponds to gene-level objects last modified 12 Aug 2026, recorded
+in `data/meta/BUNDLE.json`. `evals/resolve_golds.py` re-derives all fourteen
+benchmark answers from the live upstream files and reports drift, which catches a
+change on fourteen values; watching the upstream `pipeline/` commits is what
+catches it properly.
 
 ## Running it
 
