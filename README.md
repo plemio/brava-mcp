@@ -19,8 +19,8 @@ Summary statistics only. **Not for clinical use.**
 |---|---|
 | `search` | Resolve a gene symbol / Ensembl id / trait name to identifiers |
 | `gene_associations` | Phenome-wide scan: which traits is this gene associated with? |
-| `phenotype_associations` | Which genes carry rare-variant signal for this trait? |
-| `gene_phenotype_detail` | Does this hit replicate across ancestries and biobanks? |
+| `phenotype_associations` | Which genes carry rare-variant signal for this trait, and where do my candidates land (`genes`)? |
+| `gene_phenotype_detail` | Does this hit replicate across ancestries and biobanks? Pass a list to screen a whole hit list at once |
 | `top_associations` | Everything cross-cutting, in one call: strongest signals overall, pleiotropy (`group_by`), candidate-list screening (`genes`), and ancestry-specific findings (`absent_in`) |
 | `variants` | Single variants, genome-wide for a trait or inside one gene, with per-biobank concordance |
 | `catalog` | The 44 traits, the analysis vocabulary, and which cohorts carried a given trait (`trait`) |
@@ -31,17 +31,31 @@ The per-file layout upstream answers "this gene" and "this trait" well and
 anything cross-cutting badly, so those compositions live in the server:
 
 ```
-top_associations(group_by="gene")                  # most pleiotropic genes
-top_associations(genes="PCSK9,LDLR,APOB")          # screen a candidate list
-top_associations(ancestry="AFR", absent_in="EUR")  # what a EUR-only study missed
-catalog(kind="biobanks", trait="T2Diab")           # who contributed, and how much
-variants("LDLC")                                   # strongest variants, no gene needed
+gene_phenotype_detail("PCSK9,LDLR,APOB,ANGPTL3,ABCG5", "LDLC")  # replication screen
+top_associations(group_by="gene")                     # most pleiotropic genes
+top_associations(genes="PCSK9,LDLR,APOB")             # screen a candidate list
+top_associations(ancestry="AFR", absent_in="EUR")     # what a EUR-only study missed
+phenotype_associations("LDLC", genes="PCSK9,ACAN", detailed=True)   # exact p per candidate
+catalog(kind="biobanks", trait="T2Diab")              # who contributed, and how much
+variants("LDLC")                                      # strongest variants, no gene needed
 ```
 
-The ancestry contrast is the one to reach for when the question is why the
-consortium exists: 27 gene-trait findings clear the gene-level threshold in AFR
+The **replication screen** is the one that matters most, because it is the
+workflow this server tells you to follow. Qualifying every LDL-C hit one gene at
+a time costs 27 calls and ~44,000 characters; the list form returns a verdict per
+gene in one call and about 5,000, and you come back for the full forest on
+whichever rows deserve it. Verdicts distinguish *consistent* from *partial (3/5)*
+and flag cross-biobank heterogeneity, and they are labelled as derived by this
+server rather than published.
+
+The **ancestry contrast** is the one to reach for when the question is why the
+consortium exists: 37 gene-trait findings clear the gene-level threshold in AFR
 and not in EUR. Where a stratum was never analysed for a trait, the response says
 so rather than passing missing data off as a null result.
+
+Screens return each candidate's p-value **whether or not it is significant**,
+which the bundled index alone cannot do, and refuse outright on a gene name that
+does not resolve: a silently dropped candidate comes back as a false negative.
 
 Every tool is read-only and capped at a 25,000-character response. The five that
 return ranked rows page with `offset`/`next_offset`; `search` and `catalog` return
@@ -82,13 +96,21 @@ make serve                      # HTTP daemon on :3163
 uv run python server.py         # stdio
 ```
 
-`evals/questions.json` holds ten questions whose answers were resolved directly
-from the raw upstream files, independently of this server, so the benchmark
-cannot agree with a decoding bug. `evals/selfcheck.py` walks each one through the
-tools: currently 10/10, a median of one tool call per question, and zero outbound
-HTTP requests for the whole set. It fixes the tool path rather than letting a
-model pick it, so it proves the questions are answerable and at what cost, not
-that a model finds its way. The model-in-the-loop half is still missing.
+`evals/questions.json` holds fourteen questions whose answers were resolved
+directly from the raw upstream files by `evals/resolve_golds.py`, which imports
+nothing from `brava`, so the benchmark cannot agree with a decoding bug and
+doubles as an upstream-drift detector. Four of them are multi-entity on purpose
+(candidate screen, replication screen, cohort contribution, ancestry contrast):
+the original ten were all single-lookup, and that is precisely why they could not
+see that the batch and contrast patterns were missing.
+
+`evals/selfcheck.py` walks each question through the tools: currently 14/14, a
+median of one tool call per question, and zero outbound HTTP requests for the
+whole set. It checks each question's `evidence` (the values the tools must
+return) and never its `answer`, because several answers are conclusions that no
+string match can verify. So it proves the data is reachable and at what cost, not
+that a model reaches the right conclusion; that half needs the model-in-the-loop
+runner and is still missing.
 
 | Variable | Default | Purpose |
 |---|---|---|

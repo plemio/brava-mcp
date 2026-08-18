@@ -9,7 +9,7 @@ import pytest
 import toons
 
 import server
-from brava import client
+from brava import client, query as q
 
 pytestmark = pytest.mark.network
 
@@ -116,3 +116,38 @@ class TestNoRawPValueEverEscapes:
         ]
         for blob in outputs:
             assert "0.0000000000" not in blob, blob[:200]
+
+
+class TestRowsKeepAUniformShape:
+    """Optional keys are a token bomb, not a cosmetic detail.
+
+    TOON encodes a uniform list of rows as one table with a single header, and a
+    ragged one field-per-line. A mixed binary/quantitative response where only
+    the binary rows carried `or` doubled in size, which surfaced the moment
+    collapsing made a single response span many traits.
+    """
+
+    async def test_a_mixed_trait_response_stays_tabular(self):
+        out = await server.gene_associations("PCSK9", limit=25)
+        # The table header appears once; a ragged encoding has no header at all.
+        assert out.count("results[") == 1
+        assert "{trait,trait_id" in out
+
+    async def test_mixing_binary_and_quantitative_costs_nothing(self):
+        mixed = await server.gene_associations("PCSK9", limit=25)
+        single = await server.gene_associations("PCSK9", collapse=False, limit=25)
+        assert len(mixed) < 1.5 * len(single)
+
+    def test_odds_ratio_columns_exist_even_when_empty(self):
+        from brava import index as ix
+
+        rows = q.gene_rows(
+            {
+                "n": 1, "pheno": [0], "anc": [0], "mask": [0], "maf": [0],
+                "lp_burden": [5.0], "lp_skat": [5.0], "lp_skato": [5.0],
+                "lp_het": [1.0], "beta": [0.1], "se": [0.01],
+            },
+            ix.phenotypes(),
+            ancestry_idx=0, mask_idx=0, maf_idx=0, test="SKAT-O", max_p=None,
+        )
+        assert "or" in rows[0] and "or_ci95" in rows[0]

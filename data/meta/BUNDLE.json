@@ -1,0 +1,5 @@
+{
+  "bundled_on": "2026-08-18",
+  "gene_data_last_modified": "Wed, 12 Aug 2026 15:14:14 GMT",
+  "note": "Stamped by `make refresh-meta`. The gene-level results are frozen to the flagship paper's data release; this records which one the bundled indexes and the upstream objects came from."
+}

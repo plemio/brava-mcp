@@ -74,6 +74,18 @@ def variant_split() -> set[str]:
     return set(_load("variant_split.json")["split"])
 
 
+def bundle_stamp() -> dict:
+    """Which data release the bundled indexes came from.
+
+    A researcher citing a number needs to say which release it is from, and
+    "whatever was on the site that day" is not an answer.
+    """
+    try:
+        return _load("BUNDLE.json")
+    except BravaDataError:
+        return {}
+
+
 def all_results(ancestry: str) -> dict:
     return _load(f"all_results.{ancestry}.json")
 

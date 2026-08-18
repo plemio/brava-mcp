@@ -104,7 +104,13 @@ def aggregate(rows: list[dict[str, Any]], by: str) -> list[dict[str, Any]]:
 
     out = list(buckets.values())
     for bucket in out:
-        bucket[partner + "_list"] = ", ".join(bucket.pop("partners")[:12])
+        names = bucket.pop("partners")
+        shown = names[:12]
+        # Say when the list is clipped: an incomplete list sitting next to a
+        # complete count reads as a contradiction, or worse, as the whole set.
+        bucket[partner + "_list"] = ", ".join(shown) + (
+            f", +{len(names) - len(shown)} more" if len(names) > len(shown) else ""
+        )
     out.sort(key=lambda r: (-r[label], r["strongest_p"]))
     return out
 
@@ -208,12 +214,15 @@ def _stat_columns(
     if ci:
         row["ci95"] = f"{_sig(ci[0])} to {_sig(ci[1])}"
     row["effect"] = effect_label(beta, trait_type)
-    if trait_type == "binary":
-        orr = odds_ratio(beta, se)
-        if orr:
-            row["or"] = orr["or"]
-            if "or_lo" in orr:
-                row["or_ci95"] = f"{orr['or_lo']} to {orr['or_hi']}"
+    # Emitted for every row, empty on quantitative traits where an odds ratio is
+    # meaningless. Keys must not vary between rows: TOON encodes a uniform list
+    # as one compact table and a ragged one as field-per-line, and a single
+    # optional key doubled the size of a mixed-trait response.
+    orr = odds_ratio(beta, se) if trait_type == "binary" else None
+    row["or"] = orr["or"] if orr else ""
+    row["or_ci95"] = (
+        f"{orr['or_lo']} to {orr['or_hi']}" if orr and "or_lo" in orr else ""
+    )
     row["p_het"] = p_from_lp(payload["lp_het"][i])
     return row
 
@@ -281,6 +290,7 @@ def phenotype_rows(
     test: str,
     max_p: float | None,
     all_tests: bool = False,
+    gene_idxs: set[int] | None = None,
 ) -> list[dict[str, Any]]:
     """Decode `phenotype/{P}.{ANC}.json` into labelled, ranked gene rows.
 
@@ -290,6 +300,8 @@ def phenotype_rows(
     out: list[dict[str, Any]] = []
     lp_key = TEST_LP_KEY[test]
     for i in range(payload["n"]):
+        if gene_idxs is not None and payload["gene_idx"][i] not in gene_idxs:
+            continue
         if mask_idx is not None and payload["mask"][i] != mask_idx:
             continue
         if maf_idx is not None and payload["maf"][i] != maf_idx:
@@ -395,6 +407,67 @@ def all_results_rows(
 
     out.sort(key=lambda r: (r["p"] is None, r["p"]))
     return format_pvalues(out) if format_p else out
+
+
+def replication_summary(forests: list[tuple[str, dict]]) -> list[dict[str, Any]]:
+    """Compact replication verdict per gene, for screening a hit list.
+
+    The full forest is seven rows of estimates per gene, which is right for one
+    gene and unusable for twenty-seven: qualifying every LDL-C hit that way costs
+    27 calls and ~44k characters. This keeps only what the screening question
+    turns on, so a whole hit list fits in one table, and the caller drops back to
+    the full forest for whichever rows deserve a closer look.
+    """
+    out: list[dict[str, Any]] = []
+    for gene, forest_result in forests:
+        strata = {row["ancestry"]: row for row in forest_result["strata"]}
+        meta = strata.get("All", {})
+        conc = forest_result["concordance"]
+        agree = conc.get("concordant", "")
+        het_p = conc.get("heterogeneity_p")
+        out.append(
+            {
+                "gene": gene,
+                "p": meta.get("p"),
+                "tier": tier_of(meta.get("p")),
+                "beta": meta.get("beta"),
+                "effect": meta.get("effect"),
+                "concordant": agree,
+                "p_het": het_p,
+                "replication": _verdict(agree, het_p),
+                "strata_tested": len(strata),
+            }
+        )
+    return out
+
+
+def tier_of(p: str | float | None) -> str:
+    """Tier from an already-formatted p-value string (or a float)."""
+    if p is None:
+        return "n/a"
+    if isinstance(p, str):
+        p = 0.0 if p.startswith("<") else float(p)
+    return tier(p)
+
+
+def _verdict(concordant: str, het_p: str | float | None) -> str:
+    """One word for "did this hold up", derived and labelled as such.
+
+    Deliberately coarse. The inputs are upstream's; the grouping is ours, which
+    is why the caller states it is derived rather than published.
+    """
+    try:
+        agree, total = (int(x) for x in str(concordant).split("/"))
+    except (ValueError, AttributeError):
+        return "unknown"
+    het = None
+    if het_p is not None:
+        het = 0.0 if str(het_p).startswith("<") else float(het_p)
+    if total and agree == total:
+        return "consistent" if het is None or het >= 0.05 else "consistent but heterogeneous"
+    if agree == 0:
+        return "not replicated"
+    return f"partial ({concordant})" + ("" if het is None or het >= 0.05 else ", heterogeneous")
 
 
 def significant_pairs(payload: dict, max_p: float, test_idx: int) -> set[tuple[int, int]]:

@@ -44,6 +44,14 @@ async def paths() -> dict[str, list]:
         "q08": [server.top_associations(max_p=1e-4, limit=1, offset=29)],
         "q09": [server.variants("LDLC", gene="PCSK9", limit=1)],
         "q10": [server.gene_associations("PCSK9", mask="synonymous", maf="<0.1%", limit=1)],
+        # Multi-entity questions. The first ten are all single-lookup by
+        # construction, which is why they could not see that batch, replication-
+        # screen and contrast patterns were missing entirely.
+        "q11": [server.catalog("biobanks", trait="T2Diab")],
+        "q12": [server.phenotype_associations(
+            "LDLC", genes="PCSK9,ACAN,TTN", detailed=True, max_p=1.0, limit=10)],
+        "q13": [server.gene_phenotype_detail("PCSK9,LDLR,APOB,ANGPTL3,ABCG5", "LDLC")],
+        "q14": [server.top_associations(ancestry="AFR", absent_in="EUR", limit=1)],
     }
 
 
@@ -58,7 +66,13 @@ def found(gold: str, blob: str) -> bool:
     Deliberately NOT restricted to data lines: `warning:` carries the calibration
     -control flag, which is itself evidence for one of the questions.
     """
-    return re.search(rf"(?<![\w.]){re.escape(gold)}(?![\w.])", blob) is not None
+    # A number must not match inside a longer one ("27" in "2.27e-05"), so digits
+    # get a boundary that also excludes ".". Text must not carry that exclusion:
+    # it would refuse "not in EUR" at the end of a sentence, where the next
+    # character is a full stop.
+    numeric = re.fullmatch(r"[\d.,<>e+-]+", gold) is not None
+    right = r"(?![\w.])" if numeric else r"(?!\w)"
+    return re.search(rf"(?<![\w.]){re.escape(gold)}{right}", blob) is not None
 
 
 async def main() -> int:

@@ -126,5 +126,60 @@
       "0.00324",
       "CALIBRATION CONTROL"
     ]
+  },
+  {
+    "id": "q11",
+    "question": "Which contributing biobank brought the most type 2 diabetes cases to the analysis, and how many? Answer as 'Cohort name / count'.",
+    "answer": "All of Us / 48411",
+    "answer_context": "Cross-entity: joins the per-trait, per-biobank sizes to the cohort list. UK Biobank is larger overall (414,883) but brought fewer cases (32,060).",
+    "expected_path": [
+      "catalog(kind='biobanks', trait=...)"
+    ],
+    "evidence": [
+      "All of Us",
+      "48411"
+    ]
+  },
+  {
+    "id": "q12",
+    "question": "Of the candidate genes PCSK9, ACAN and TTN, which reach the gene-level Cauchy threshold (p<2.5e-6) for LDL cholesterol in the cross-ancestry meta? Name them.",
+    "answer": "PCSK9",
+    "answer_context": "Candidate screen with a deliberate mix: PCSK9 at 1.17e-205, ACAN at 0.295, TTN at 0.447. A tool that only returns significant rows cannot show that the other two were actually looked at.",
+    "expected_path": [
+      "phenotype_associations(genes=..., detailed=true)"
+    ],
+    "evidence": [
+      "PCSK9",
+      "ACAN",
+      "TTN",
+      "ns"
+    ]
+  },
+  {
+    "id": "q13",
+    "question": "Among PCSK9, LDLR, APOB, ANGPTL3 and ABCG5 for LDL cholesterol, which replicate in all five superpopulations and which only in some? Give the counts.",
+    "answer": "PCSK9 LDLR APOB 5/5; ANGPTL3 ABCG5 3/5",
+    "answer_context": "Replication screen over a hit list. One call at a time costs 5 calls and ~8,000 characters.",
+    "expected_path": [
+      "gene_phenotype_detail(gene='A,B,C,...')"
+    ],
+    "evidence": [
+      "5/5",
+      "3/5",
+      "ANGPTL3"
+    ]
+  },
+  {
+    "id": "q14",
+    "question": "How many gene-trait findings clear the gene-level Cauchy threshold in the African-ancestry stratum but not in the European one? Give a number.",
+    "answer": "37",
+    "answer_context": "Ancestry contrast, the consortium's own reason for existing. Requires joining two ancestry shards; done by hand it is 2-4 calls plus a set difference.",
+    "expected_path": [
+      "top_associations(ancestry='AFR', absent_in='EUR')"
+    ],
+    "evidence": [
+      "37",
+      "not in EUR"
+    ]
   }
 ]

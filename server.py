@@ -13,6 +13,7 @@ Design notes live in the modules: `index` (bundled metadata + resolution),
 
 from __future__ import annotations
 
+import asyncio
 import os
 
 import toons
@@ -175,6 +176,7 @@ async def gene_associations(
     limit: int = 25,
     offset: int = 0,
     all_tests: bool = False,
+    collapse: bool = True,
 ) -> str:
     """Phenome-wide association scan for ONE gene: which traits is it associated with?
 
@@ -199,6 +201,10 @@ async def gene_associations(
         offset: Skip this many rows, to page through a long result set. The
             response reports total_matching and next_offset.
         all_tests: Also return the other two tests' p-values per row.
+        collapse: Report each trait once, at the mask/MAF where it is most
+            significant (default true). Each trait is tested under 6 masks x 2
+            MAF cutoffs, so without this a 25-row answer covers only a handful
+            of traits. Set false to see every combination tested.
 
     Returns: trait, category, mask, MAF, p-value, significance tier, effect size
     beta with its 95% CI (odds ratio for binary traits), effect direction, and
@@ -238,13 +244,20 @@ async def gene_associations(
         max_p=max_p,
         all_tests=all_tests,
     )
+    total = len(rows)
+    if collapse:
+        # A trait repeated across 12 mask/MAF cells crowds out the next trait,
+        # so the flagship "what does this gene do" call answered with 4 distinct
+        # traits out of 25 rows.
+        rows = q.collapse_best(rows, ("trait_id", "ancestry"))
     out = {
         "gene": info["gene"],
         "ensg": info["ensg"],
         "position": f"chr{info['chr']}:{info['start']}-{info['end']} (GRCh38)",
         "ancestry": ANCESTRY_LABEL.get(ancestry, "all strata"),
         "test": test_name,
-        "total_matching": len(rows),
+        "total_matching": total,
+        "distinct_traits": len(rows) if collapse else None,
         "results": rows[offset : offset + limit],
         "note": f"{BETA_NOTE} {DISCLAIMER}",
     }
@@ -268,6 +281,8 @@ async def phenotype_associations(
     offset: int = 0,
     detailed: bool = False,
     collapse: bool = True,
+    genes: str | None = None,
+    all_tests: bool = False,
 ) -> str:
     """Top associated genes for ONE trait: which genes carry rare-variant signal?
 
@@ -289,6 +304,11 @@ async def phenotype_associations(
             slower, and the only path that leaves the process.
         collapse: Keep only each gene's most significant mask/MAF combination
             (default true). Set false to see every combination tested.
+        genes: Restrict to a comma-separated candidate list ("PCSK9,LDLR,APOB").
+            With detailed=true this reports each candidate's exact p-value even
+            where it clears no threshold, which is the screening question, in one
+            call instead of one per gene.
+        all_tests: Also return the other two tests' p-values per row.
 
     Returns: gene symbol, Ensembl id, chromosome, mask, MAF, p-value,
     significance tier and effect size, ranked by p-value.
@@ -319,7 +339,22 @@ async def phenotype_associations(
             f"{', '.join(pheno['ancestries'])}."
         )
 
-    use_bundle = not detailed and max_p <= SIG_SUGGEST
+    gene_idxs = None
+    if genes:
+        wanted = [g.strip() for g in genes.split(",") if g.strip()]
+        resolved = {g: ix.resolve_gene(g) for g in wanted}
+        unknown = [g for g, i in resolved.items() if i is None]
+        if unknown:
+            return _err(
+                f"Unknown gene(s): {', '.join(unknown)}. Call search() on each, or "
+                "pass Ensembl ids. Screening a list is only meaningful if every "
+                "name resolved."
+            )
+        gene_idxs = set(resolved.values())
+
+    # A candidate screen wants each gene's p-value whether or not it is
+    # significant, and the bundled index only holds rows past 1e-4.
+    use_bundle = not detailed and max_p <= SIG_SUGGEST and gene_idxs is None
     if use_bundle:
         rows = q.all_results_rows(
             ix.all_results(anc_name),
@@ -347,6 +382,8 @@ async def phenotype_associations(
             maf_idx=maf_idx,
             test=test_name,
             max_p=max_p,
+            all_tests=all_tests,
+            gene_idxs=gene_idxs,
         )
         source = "full per-trait results file"
 
@@ -394,10 +431,15 @@ async def gene_phenotype_detail(
     cross-cohort heterogeneity p-value, and a concordance tally.
 
     Use it to qualify any hit found via `gene_associations` or
-    `phenotype_associations` before treating it as established.
+    `phenotype_associations` before treating it as established. Pass a
+    comma-separated list to screen a whole hit list at once: qualifying every
+    LDL-C hit one at a time costs 27 calls and ~44,000 characters, so the list
+    form returns a compact verdict per gene and you come back here for whichever
+    rows deserve the full forest.
 
     Args:
-        gene: Gene symbol or Ensembl id.
+        gene: Gene symbol or Ensembl id, or a comma-separated list of them
+            ("PCSK9,LDLR,APOB") to screen several at once.
         phenotype: Trait id or name.
         mask: Variant annotation mask (default "pLoF | damaging missense").
         maf: "<0.1%" (default) or "<0.01%".
@@ -408,9 +450,19 @@ async def gene_phenotype_detail(
     count is DERIVED by this server from upstream's numbers. It is not itself
     a published statistic.
     """
-    gidx = ix.resolve_gene(gene)
-    if gidx is None:
-        return _err(f"Unknown gene '{gene}'. Call search('{gene}').")
+    wanted = [g.strip() for g in (gene or "").split(",") if g.strip()]
+    if not wanted:
+        return _err("Pass a gene symbol or Ensembl id, or a comma-separated list.")
+    if len(wanted) > 25:
+        return _err(
+            f"{len(wanted)} genes is more than this screens at once (max 25). "
+            "Split the list, or narrow it with top_associations first."
+        )
+    resolved = {g: ix.resolve_gene(g) for g in wanted}
+    unknown = [g for g, i in resolved.items() if i is None]
+    if unknown:
+        return _err(f"Unknown gene(s): {', '.join(unknown)}. Call search() on each.")
+
     pidx = ix.resolve_phenotype(phenotype)
     if pidx is None:
         return _err(f"Unknown trait '{phenotype}'. Call catalog(kind='phenotypes').")
@@ -424,23 +476,63 @@ async def gene_phenotype_detail(
     if mask_idx is None or maf_idx is None:
         return _err("A specific mask and MAF cutoff are required for this view.")
 
-    info = ix.gene_info(gidx)
     pheno = ix.phenotypes()[pidx]
-    try:
-        payload = await client.gene_payload(info["ensg"])
-    except client.NotFound:
-        return _err(f"{info['gene']} ({info['ensg']}) has no BRaVa results.")
-    except client.Unavailable as exc:
-        return _err(f"BRaVa data is temporarily unreachable: {exc}")
 
-    result = q.forest(
-        payload,
-        pheno,
-        pheno_idx=pidx,
-        mask_idx=mask_idx,
-        maf_idx=maf_idx,
-        test=test_name,
-    )
+    async def forest_for(idx: int) -> dict | None:
+        info = ix.gene_info(idx)
+        try:
+            payload = await client.gene_payload(info["ensg"])
+        except (client.NotFound, client.Unavailable):
+            return None
+        return q.forest(
+            payload, pheno, pheno_idx=pidx, mask_idx=mask_idx,
+            maf_idx=maf_idx, test=test_name,
+        )
+
+    # ---- list form: a compact verdict per gene ----------------------------
+    if len(wanted) > 1:
+        # Concurrent, but the client coalesces and caps concurrency, so this is
+        # still at most one request per distinct gene.
+        results = await asyncio.gather(*(forest_for(i) for i in resolved.values()))
+        pairs = [
+            (ix.gene_info(idx)["gene"], res)
+            for (idx, res) in zip(resolved.values(), results)
+            if res and res["strata"]
+        ]
+        missing = [
+            g for g, res in zip(resolved, results) if not res or not res["strata"]
+        ]
+        if not pairs:
+            return _err(
+                f"None of those genes has a {MASK_LABEL[mask_idx]} / "
+                f"{MAF_LABEL[maf_idx]} result for {pheno['name']}."
+            )
+        out = {
+            "trait": pheno["name"],
+            "type": pheno["type"],
+            "mask": MASK_LABEL[mask_idx],
+            "maf": MAF_LABEL[maf_idx],
+            "test": test_name,
+            "screened": len(pairs),
+            "results": q.replication_summary(pairs),
+            "replication_basis": "'concordant' counts the 5 superpopulations whose "
+            "effect matches the meta at nominal p<0.05; the verdict is derived by "
+            "this server from upstream's numbers, not a published statistic. Call "
+            "this tool with a single gene for its full per-ancestry forest.",
+            "note": f"{BETA_NOTE} {DISCLAIMER}",
+        }
+        if missing:
+            out["no_result"] = ", ".join(missing)
+        if (mn := _mask_note(mask_idx)):
+            out["warning"] = mn
+        return _emit(out, narrow="a shorter gene list")
+
+    # ---- single gene: the full forest -------------------------------------
+    gidx = next(iter(resolved.values()))
+    info = ix.gene_info(gidx)
+    result = await forest_for(gidx)
+    if result is None:
+        return _err(f"{info['gene']} ({info['ensg']}) has no BRaVa results.")
     if not result["strata"]:
         return _err(
             f"No {MASK_LABEL[mask_idx]} / {MAF_LABEL[maf_idx]} result for "
@@ -483,10 +575,10 @@ async def top_associations(
 ) -> str:
     """Strongest rare-variant associations ACROSS traits and genes.
 
-    Answers cross-cutting questions the per-gene and per-trait views cannot:
-    "the strongest rare-variant signals in cardiovascular disease", "which
-    traits does this gene hit at exome-wide significance", "what are the most
-    pleiotropic genes". Served entirely from the bundled index, with no network access.
+    The cross-cutting view: "the strongest rare-variant signals in cardiovascular
+    disease", "which traits does this gene hit at exome-wide significance", "the
+    most pleiotropic genes", "screen these candidates", "what is specific to one
+    ancestry". Served entirely from the bundled index, with no network access.
 
     Args:
         ancestry: All (default), EUR, AFR, AMR, EAS, SAS, non_EUR.
@@ -878,6 +970,15 @@ async def catalog(kind: str = "phenotypes", trait: str | None = None) -> str:
                 "sequencing": b["sequencing"],
                 "ascertainment": b["ascertainment"],
                 "ancestries": ",".join(b["ancestries"]),
+                # Which populations a cohort actually holds, and in what numbers.
+                # Without it "does any cohort have African-ancestry samples" is
+                # unanswerable from a list that only names the strata analysed.
+                "ancestry_n": "; ".join(
+                    f"{pop} {n:,}"
+                    for pop, n in sorted(
+                        (b.get("ancestry_n") or {}).items(), key=lambda kv: -kv[1]
+                    )
+                ),
             }
             for b in ix.biobanks()
         ]
@@ -913,6 +1014,7 @@ async def catalog(kind: str = "phenotypes", trait: str | None = None) -> str:
                     "BRaVa carries no allele frequencies and no common-variant GWAS. "
                     "use gnomAD and the GWAS Catalog for those.",
                 ],
+                "data_release": ix.bundle_stamp(),
                 "paper": PAPER_URL,
                 "browser": BROWSER_URL,
             }
