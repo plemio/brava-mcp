@@ -529,6 +529,10 @@ async def variants(
 
 if __name__ == "__main__":
     print("BRaVa MCP Server started", flush=True)
+    # Banner first, then fetch: the readiness probe matches the line above, so
+    # the daemon reports healthy immediately while an 873 MB first download
+    # proceeds in the background instead of expiring inside a tool timeout.
+    db.prefetch()
     # Transport switch: stdio is the per-worker child the engine spawns, http the
     # long-lived shared daemon reached via MCP_SERVICES_BASE_URL. Public read-only
     # data, no credentials, so a shared daemon is tenant-safe.

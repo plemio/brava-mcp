@@ -17,6 +17,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import threading
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -44,6 +45,12 @@ _FORBIDDEN = re.compile(
 _STARTS_OK = re.compile(r"^\s*(select|with|describe|show|explain|pragma\s+table_info)\b", re.IGNORECASE)
 
 _con: duckdb.DuckDBPyConnection | None = None
+# Serialises acquisition: the readiness banner prints immediately and the daemon
+# starts fetching in the background, so the first real query usually finds the
+# file already there instead of waiting out an 873 MB download inside a tool
+# timeout. Concurrent callers wait on the same download rather than starting
+# their own.
+_download_lock = threading.Lock()
 
 
 class DatabaseUnavailable(RuntimeError):
@@ -58,6 +65,38 @@ def ensure_database() -> Path:
     """Return the local database path, downloading it once if needed."""
     if DB_PATH.exists() and DB_PATH.stat().st_size > 0:
         return DB_PATH
+    with _download_lock:
+        # Re-checked under the lock: whoever held it may have just finished.
+        if DB_PATH.exists() and DB_PATH.stat().st_size > 0:
+            return DB_PATH
+        return _download()
+
+
+def prefetch() -> threading.Thread | None:
+    """Start acquiring the database in the background, if it is not already here.
+
+    Called at daemon startup. The readiness probe matches the banner printed
+    before this returns, so the daemon reports healthy while the file lands, and
+    a first query arriving mid-download blocks on the same lock rather than
+    starting a second one.
+    """
+    if DB_PATH.exists() and DB_PATH.stat().st_size > 0:
+        return None
+    thread = threading.Thread(target=_quiet_prefetch, daemon=True, name="brava-db-fetch")
+    thread.start()
+    return thread
+
+
+def _quiet_prefetch() -> None:
+    try:
+        ensure_database()
+    except DatabaseUnavailable:
+        # Reported properly when a tool is actually called; failing loudly here
+        # would only put a traceback in the daemon log at boot.
+        pass
+
+
+def _download() -> Path:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = DB_PATH.with_suffix(".part")
     try:
