@@ -10,7 +10,7 @@
     ],
     "evidence": [
       "LDL cholesterol",
-      "1.58e-159"
+      "1.585e-159"
     ]
   },
   {
@@ -22,8 +22,7 @@
       "gene_associations"
     ],
     "evidence": [
-      "lowers",
-      "-0.0372"
+      "-0.03716"
     ]
   },
   {
@@ -48,7 +47,7 @@
     ],
     "evidence": [
       "GCK",
-      "1.51e-45"
+      "1.514e-45"
     ]
   },
   {
@@ -123,7 +122,7 @@
       "gene_associations with mask"
     ],
     "evidence": [
-      "0.00324",
+      "0.003236",
       "CALIBRATION CONTROL"
     ]
   },
@@ -151,8 +150,7 @@
     "evidence": [
       "PCSK9",
       "ACAN",
-      "TTN",
-      "ns"
+      "TTN"
     ]
   },
   {
@@ -176,11 +174,10 @@
     "answer": "27",
     "answer_context": "Ancestry contrast, counted as distinct pairs (the default collapsed view). 37 is the row count before collapsing, which is not what the question asks.",
     "expected_path": [
-      "top_associations(ancestry='AFR', absent_in='EUR')"
+      "query() with a NOT EXISTS anti-join across ancestry shards"
     ],
     "evidence": [
-      "27",
-      "not in EUR"
+      "27"
     ]
   }
 ]

@@ -412,6 +412,63 @@ def all_results_rows(
     return format_pvalues(out) if format_p else out
 
 
+def forest_from_rows(
+    rows: list[dict[str, Any]],
+    trait_type: str,
+    sizes: dict[str, int],
+) -> dict[str, Any]:
+    """Per-ancestry effect estimates from decoded database rows.
+
+    The forest stays a tool rather than a documented query for one reason: the
+    concordance count must exclude 'All' and 'non_EUR', which pool the same
+    individuals as the strata being counted. A model writing the obvious SQL
+    aggregates over every ancestry and double-counts, and the result looks
+    perfectly reasonable.
+    """
+    by_anc = {r["ancestry"]: r for r in rows}
+    ordered = []
+    for anc in ANCESTRIES:
+        row = by_anc.get(anc)
+        if row is None:
+            continue
+        beta, se = row.get("beta"), row.get("se")
+        out: dict[str, Any] = {
+            "ancestry": anc,
+            "n": sizes.get(anc),
+            "p": row.get("p"),
+            "beta": _sig(beta),
+            "se": _sig(se),
+            "effect": effect_label(beta, trait_type),
+        }
+        ci = ci95(beta, se)
+        out["ci95"] = f"{_sig(ci[0])} to {_sig(ci[1])}" if ci else ""
+        if anc == "All":
+            out["p_het"] = row.get("p_het")
+        ordered.append(out)
+
+    meta = by_anc.get("All")
+    concordance: dict[str, Any] = {
+        "basis": "derived by this server, not a published statistic"
+    }
+    if meta and meta.get("beta"):
+        sign = 1 if meta["beta"] > 0 else -1
+        counted = [
+            r for a in CONCORDANCE_STRATA
+            if (r := by_anc.get(a)) is not None and r.get("beta") is not None
+        ]
+        same = [r for r in counted if (1 if r["beta"] > 0 else -1) == sign]
+        agree = [r for r in same if r.get("p") is not None and r["p"] < 0.05]
+        concordance.update({
+            "definition": "same effect direction as the meta AND nominal p<0.05, "
+            "counted over the 5 superpopulations (All and non_EUR excluded: they "
+            "pool the same individuals)",
+            "concordant": f"{len(agree)}/{len(counted)}",
+            "same_direction": f"{len(same)}/{len(counted)}",
+            "heterogeneity_p": meta.get("p_het"),
+        })
+    return {"strata": format_pvalues(ordered), "concordance": format_pvalues([concordance])[0]}
+
+
 def replication_summary(forests: list[tuple[str, dict]]) -> list[dict[str, Any]]:
     """Compact replication verdict per gene, for screening a hit list.
 

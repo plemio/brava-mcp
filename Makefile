@@ -5,10 +5,11 @@ META_BASE = https://nikbaya.github.io/brava_browser/data/meta
 META_FILES = genes.json phenotypes.json biobanks.json pheno_sizes.json variant_split.json
 ANCESTRIES = All EUR AFR AMR EAS SAS non_EUR
 
-.PHONY: help sync test test-all eval serve refresh-meta
+.PHONY: help sync db test test-all eval serve refresh-meta
 
 help:
 	@echo "sync         install dependencies"
+	@echo "db           download the published database (873 MB, once)"
 	@echo "test         offline suite (no network)"
 	@echo "test-all     offline + live-data suite"
 	@echo "eval         14 benchmark questions against independently derived answers"
@@ -17,6 +18,9 @@ help:
 
 sync:
 	$(UV) sync
+
+db:
+	$(UV) run python -c "from brava import db; print(db.ensure_database())"
 
 test:
 	$(UV) run pytest -q -m "not network"

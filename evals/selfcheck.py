@@ -32,28 +32,50 @@ QUESTIONS = json.loads((Path(__file__).parent / "questions.json").read_text())
 
 
 async def paths() -> dict[str, list]:
-    """One entry per question: the tool calls a competent agent would make."""
+    """One entry per question: the calls a competent agent would make.
+
+    Most questions are now a single SQL statement. That is the point of the
+    rewrite: the ones that used to need a bespoke tool parameter (pleiotropy,
+    candidate screening, ancestry contrast, cohort contribution) are clauses.
+    """
     return {
-        "q01": [server.gene_associations("ENSG00000169174", mask="pLoF", maf="<0.1%", limit=1)],
-        "q02": [server.gene_associations("PCSK9", mask="pLoF", maf="<0.1%", limit=1)],
+        "q01": [server.query(
+            "SELECT trait, p_skato FROM results WHERE ensg='ENSG00000169174' "
+            "AND ancestry='All' AND mask='pLoF' AND maf='<0.1%' ORDER BY p_skato LIMIT 1")],
+        "q02": [server.query(
+            "SELECT beta FROM results WHERE gene='PCSK9' AND trait_id='LDLC' "
+            "AND ancestry='All' AND mask='pLoF' AND maf='<0.1%'")],
         "q03": [server.gene_phenotype_detail("PCSK9", "LDLC", mask="pLoF", maf="<0.1%")],
-        "q04": [server.phenotype_associations("Type 2 diabetes", limit=1)],
-        "q05": [server.phenotype_associations("LDLC", max_p=2.5e-6, limit=1)],
-        "q06": [server.top_associations(max_p=1.39e-7, group_by="gene", limit=1)],
-        "q07": [server.catalog("phenotypes")],
-        "q08": [server.top_associations(max_p=1e-4, limit=1, offset=29)],
+        "q04": [server.query(
+            "SELECT gene, min(p_skato) p FROM results WHERE trait_id='T2Diab' "
+            "AND ancestry='All' AND mask<>'synonymous' GROUP BY gene ORDER BY p LIMIT 1")],
+        "q05": [server.query(
+            "SELECT count(DISTINCT gene) n FROM results WHERE trait_id='LDLC' "
+            "AND ancestry='All' AND p_skato < 2.5e-6")],
+        "q06": [server.query(
+            "SELECT gene, count(DISTINCT trait) traits FROM results WHERE ancestry='All' "
+            "AND p_skato < 1.39e-7 GROUP BY gene ORDER BY traits DESC LIMIT 1")],
+        "q07": [server.query(
+            "SELECT n, cases FROM pheno_sizes WHERE trait_id='AFib' AND ancestry='All'")],
+        "q08": [server.query(
+            "SELECT gene, trait, p FROM (SELECT gene, trait, min(p_skato) p FROM results "
+            "WHERE ancestry='All' GROUP BY gene, trait) ORDER BY p, gene LIMIT 1 OFFSET 29")],
         "q09": [server.variants("LDLC", gene="PCSK9", limit=1)],
-        "q10": [server.gene_associations("PCSK9", mask="synonymous", maf="<0.1%", limit=1)],
-        # Multi-entity questions. The first ten are all single-lookup by
-        # construction, which is why they could not see that batch, replication-
-        # screen and contrast patterns were missing entirely.
-        "q11": [server.catalog("biobanks", trait="T2Diab")],
-        # No max_p override: a screen that needs one to show its candidates is
-        # the defect, not the call site.
-        "q12": [server.phenotype_associations(
-            "LDLC", genes="PCSK9,ACAN,TTN", detailed=True, limit=10)],
+        "q10": [server.query(
+            "SELECT p_skato FROM results WHERE gene='PCSK9' AND trait_id='LDLC' "
+            "AND ancestry='All' AND mask='synonymous' AND maf='<0.1%'"), server.schema()],
+        "q11": [server.query(
+            "SELECT biobank, sum(cases) c FROM biobank_sizes WHERE trait_id='T2Diab' "
+            "GROUP BY biobank ORDER BY c DESC LIMIT 1")],
+        "q12": [server.query(
+            "SELECT gene, min(p_skato) p FROM results WHERE ancestry='All' "
+            "AND trait_id='LDLC' AND gene IN ('PCSK9','ACAN','TTN') GROUP BY gene ORDER BY p")],
         "q13": [server.gene_phenotype_detail("PCSK9,LDLR,APOB,ANGPTL3,ABCG5", "LDLC")],
-        "q14": [server.top_associations(ancestry="AFR", absent_in="EUR", limit=1)],
+        "q14": [server.query(
+            "SELECT count(*) n FROM (SELECT DISTINCT a.gene_idx, a.pheno FROM results a "
+            "WHERE a.ancestry='AFR' AND a.p_skato < 2.5e-6 AND NOT EXISTS (SELECT 1 FROM "
+            "results e WHERE e.ancestry='EUR' AND e.gene_idx=a.gene_idx AND e.pheno=a.pheno "
+            "AND e.p_skato < 2.5e-6))")],
     }
 
 
