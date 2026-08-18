@@ -138,6 +138,30 @@ class TestRowsKeepAUniformShape:
         single = await server.gene_associations("PCSK9", collapse=False, limit=25)
         assert len(mixed) < 1.5 * len(single)
 
+    async def test_a_degenerate_row_does_not_break_the_table(self):
+        # SAIGE emits rows with se=0 at the p-value floor, and those sort FIRST.
+        # APOB pLoF <0.01% has four; while ci95 was conditional this response
+        # fell out of the table form, 4,740 characters to 8,895.
+        out = await server.gene_associations("APOB", mask="pLoF", maf="<0.01%")
+        assert "{trait,trait_id" in out
+        assert len(out) < 6000
+
+    def test_every_optional_column_is_present_on_a_degenerate_row(self):
+        from brava import index as ix
+
+        rows = q.gene_rows(
+            {
+                "n": 1, "pheno": [0], "anc": [0], "mask": [0], "maf": [0],
+                "lp_burden": [400.0], "lp_skat": [400.0], "lp_skato": [400.0],
+                "lp_het": [None], "beta": [-0.5], "se": [0.0],
+            },
+            ix.phenotypes(),
+            ancestry_idx=0, mask_idx=0, maf_idx=0, test="SKAT-O", max_p=None,
+        )
+        # Every key a healthy row carries must be here, empty rather than absent.
+        for key in ("ci95", "or", "or_ci95"):
+            assert key in rows[0], key
+
     def test_odds_ratio_columns_exist_even_when_empty(self):
         from brava import index as ix
 

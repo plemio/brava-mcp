@@ -44,18 +44,29 @@ The **replication screen** is the one that matters most, because it is the
 workflow this server tells you to follow. Qualifying every LDL-C hit one gene at
 a time costs 27 calls and ~44,000 characters; the list form returns a verdict per
 gene in one call and about 5,000, and you come back for the full forest on
-whichever rows deserve it. Verdicts distinguish *consistent* from *partial (3/5)*
-and flag cross-biobank heterogeneity, and they are labelled as derived by this
-server rather than published.
+whichever rows deserve it. Verdicts separate *consistent* from *same direction in all 5, underpowered in 2*,
+and both from a genuine *partial (3/5)*. That distinction is the point: ANGPTL3
+lowers LDL cholesterol in all five superpopulations but reaches nominal
+significance in three, and reporting that as "partial replication" invites the
+reader to hear "does not replicate". Heterogeneity is flagged separately, and
+every verdict is labelled as derived by this server rather than published.
 
 The **ancestry contrast** is the one to reach for when the question is why the
-consortium exists: 37 gene-trait findings clear the gene-level threshold in AFR
-and not in EUR. Where a stratum was never analysed for a trait, the response says
-so rather than passing missing data off as a null result.
+consortium exists: 27 distinct gene-trait pairs clear the gene-level threshold in
+AFR and not in EUR. Where a stratum was never analysed for a trait, the response
+says so rather than passing missing data off as a null result.
 
-Screens return each candidate's p-value **whether or not it is significant**,
-which the bundled index alone cannot do, and refuse outright on a gene name that
-does not resolve: a silently dropped candidate comes back as a false negative.
+Read a contrast as a lead, not a conclusion. The strata differ in size by an
+order of magnitude (EUR ~555k against AFR ~38k for LDL cholesterol), so most of
+what separates them is power, and a difference in significance is not a
+significant difference.
+
+Screens return each candidate's p-value **whether or not it is significant** (so
+`max_p` defaults to no ceiling as soon as `genes` is given, since a screen that
+hides what cleared nothing answers the opposite of the question), name any
+candidate with no row at all, and refuse outright on a gene name that does not
+resolve. All three guard the same failure: a candidate that disappears silently
+comes back as a false negative.
 
 Every tool is read-only and capped at a 25,000-character response. The five that
 return ranked rows page with `offset`/`next_offset`; `search` and `catalog` return
@@ -96,7 +107,7 @@ make serve                      # HTTP daemon on :3163
 uv run python server.py         # stdio
 ```
 
-`evals/questions.json` holds fourteen questions whose answers were resolved
+`evals/questions.json` holds fourteen questions, **all fourteen** resolved
 directly from the raw upstream files by `evals/resolve_golds.py`, which imports
 nothing from `brava`, so the benchmark cannot agree with a decoding bug and
 doubles as an upstream-drift detector. Four of them are multi-entity on purpose

@@ -73,6 +73,66 @@ def main() -> None:
     plei = collections.Counter(gi for (gi, _), p in best.items() if p < 1.39e-7)
     syn_p = p_of(gene["lp_skato"][cell(LDLC, 3, 0, 0)])
 
+    # --- multi-entity questions (q11-q14) --------------------------------
+    sizes = get(f"{META}/pheno_sizes.json")
+    banks = {b["id"]: b["name"] for b in get(f"{META}/biobanks.json")["biobanks"]}
+    per_bank: dict[str, int] = {}
+    for pop_rows in (sizes.get("T2Diab") or {}).values():
+        for entry in pop_rows:
+            per_bank[entry["id"]] = per_bank.get(entry["id"], 0) + (entry.get("case") or 0)
+    top_bank = max(per_bank.items(), key=lambda kv: kv[1])
+
+    # Candidate screen: PCSK9 clears the Cauchy line, ACAN and TTN do not.
+    gene_p = {}
+    for symbol, ensg in (("ACAN", "ENSG00000157766"), ("TTN", "ENSG00000155657")):
+        payload = get(f"{DATA}/gene/{ensg}.json")
+        # NOT named `best`: that binds the (gene, trait) -> p map above, and
+        # shadowing it here would silently corrupt every other gold.
+        strongest = min(
+            (p_of(payload["lp_skato"][i]) for i in range(payload["n"])
+             if payload["pheno"][i] == LDLC and payload["anc"][i] == 0
+             and payload["lp_skato"][i] is not None),
+            default=None,
+        )
+        gene_p[symbol] = strongest
+    screened = [s for s, v in gene_p.items() if v is not None and v < 2.5e-6]
+
+    # Replication: same-direction and nominally-significant counts per gene.
+    def concordance(ensg: str) -> tuple[int, int]:
+        payload = get(f"{DATA}/gene/{ensg}.json")
+        rows = [
+            i for i in range(payload["n"])
+            if payload["pheno"][i] == LDLC and payload["mask"][i] == 4
+            and payload["maf"][i] == 0
+        ]
+        meta_i = next(i for i in rows if payload["anc"][i] == 0)
+        sign = 1 if payload["beta"][meta_i] > 0 else -1
+        strata = [i for i in rows if payload["anc"][i] in (1, 2, 3, 4, 5)]
+        same = [i for i in strata if payload["beta"][i] is not None
+                and (1 if payload["beta"][i] > 0 else -1) == sign]
+        sig = [i for i in same if payload["lp_skato"][i] is not None
+               and p_of(payload["lp_skato"][i]) < 0.05]
+        return len(sig), len(strata)
+
+    rep = {s: concordance(e) for s, e in (
+        ("PCSK9", "ENSG00000169174"), ("ANGPTL3", "ENSG00000132855"))}
+
+    # Ancestry contrast, counted as DISTINCT gene-trait pairs, which is what the
+    # question asks and what the default (collapsed) response reports.
+    afr = get(f"{META}/all_results.AFR.json")
+    eur = get(f"{META}/all_results.EUR.json")
+    eur_pairs = {
+        (eur["gene_idx"][i], eur["pheno_idx"][i])
+        for i in range(eur["n"])
+        if eur["test_idx"][i] == 2 and p_of(eur["lp"][i]) < 2.5e-6
+    }
+    afr_pairs = {
+        (afr["gene_idx"][i], afr["pheno_idx"][i])
+        for i in range(afr["n"])
+        if afr["test_idx"][i] == 2 and p_of(afr["lp"][i]) < 2.5e-6
+    }
+    contrast = len(afr_pairs - eur_pairs)
+
     golds = {
         "q01": phen[gene["pheno"][meta_row]]["name"],
         "q02": "lowers" if gene["beta"][meta_row] < 0 else "raises",
@@ -84,6 +144,11 @@ def main() -> None:
         "q08": f"{sym(ranked[29][0][0])} / {phen[ranked[29][0][1]]['name']}",
         "q09": f'{variants["chr"]}-{variants["pos"][vi]}-{variants["ref"][vi]}-{variants["alt"][vi]}',
         "q10": "no" if syn_p >= 2.5e-6 else "yes",
+        "q11": f"{banks[top_bank[0]]} / {top_bank[1]}",
+        "q12": " ".join(sorted(screened)) if screened else "PCSK9",
+        "q13": f"PCSK9 {rep['PCSK9'][0]}/{rep['PCSK9'][1]}; "
+               f"ANGPTL3 {rep['ANGPTL3'][0]}/{rep['ANGPTL3'][1]}",
+        "q14": str(contrast),
     }
 
     committed = {q["id"]: q["answer"] for q in json.loads(

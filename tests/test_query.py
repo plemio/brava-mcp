@@ -178,3 +178,29 @@ class TestAggregate:
         assert out[0]["trait"] == "T1"
         assert out[0]["genes"] == 2
         assert out[0]["strongest_gene"] == "AAA"
+
+
+class TestReplicationVerdict:
+    """The verdict wording is a scientific claim, so each branch is pinned.
+
+    Conflating "underpowered" with "discordant" is the error that matters here:
+    one says the evidence is thin, the other says it points the other way.
+    """
+
+    def test_all_strata_significant_is_consistent(self):
+        assert q._verdict("5/5", 0.4, "5/5") == "consistent"
+
+    def test_heterogeneity_qualifies_a_consistent_verdict(self):
+        assert q._verdict("5/5", 0.001, "5/5") == "consistent but heterogeneous"
+
+    def test_unanimous_direction_with_few_significant_is_underpowered(self):
+        assert q._verdict("3/5", 0.4, "5/5") == "same direction in all 5, underpowered in 2"
+
+    def test_genuinely_split_directions_stay_partial(self):
+        assert q._verdict("3/5", 0.4, "4/5") == "partial (3/5)"
+
+    def test_nothing_agreeing_is_not_replicated(self):
+        assert q._verdict("0/5", 0.4, "2/5") == "not replicated"
+
+    def test_a_missing_count_does_not_invent_a_verdict(self):
+        assert q._verdict(None, None, None) == "unknown"

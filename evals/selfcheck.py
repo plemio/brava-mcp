@@ -48,8 +48,10 @@ async def paths() -> dict[str, list]:
         # construction, which is why they could not see that batch, replication-
         # screen and contrast patterns were missing entirely.
         "q11": [server.catalog("biobanks", trait="T2Diab")],
+        # No max_p override: a screen that needs one to show its candidates is
+        # the defect, not the call site.
         "q12": [server.phenotype_associations(
-            "LDLC", genes="PCSK9,ACAN,TTN", detailed=True, max_p=1.0, limit=10)],
+            "LDLC", genes="PCSK9,ACAN,TTN", detailed=True, limit=10)],
         "q13": [server.gene_phenotype_detail("PCSK9,LDLR,APOB,ANGPTL3,ABCG5", "LDLC")],
         "q14": [server.top_associations(ancestry="AFR", absent_in="EUR", limit=1)],
     }

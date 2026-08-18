@@ -210,9 +210,12 @@ def _stat_columns(
 
     row["beta"] = _sig(beta)
     row["se"] = _sig(se)
+    # Emitted for every row, empty where SE is missing or zero. SAIGE produces
+    # degenerate rows with se=0 at the p-value floor, which sort FIRST, so a
+    # conditional key here is not a rare edge: APOB pLoF <0.01% has four of them
+    # and the response fell out of TOON's table form, 4,740 characters to 8,895.
     ci = ci95(beta, se)
-    if ci:
-        row["ci95"] = f"{_sig(ci[0])} to {_sig(ci[1])}"
+    row["ci95"] = f"{_sig(ci[0])} to {_sig(ci[1])}" if ci else ""
     row["effect"] = effect_label(beta, trait_type)
     # Emitted for every row, empty on quantitative traits where an odds ratio is
     # meaningless. Keys must not vary between rows: TOON encodes a uniform list
@@ -433,8 +436,9 @@ def replication_summary(forests: list[tuple[str, dict]]) -> list[dict[str, Any]]
                 "beta": meta.get("beta"),
                 "effect": meta.get("effect"),
                 "concordant": agree,
+                "same_dir": conc.get("same_direction", ""),
                 "p_het": het_p,
-                "replication": _verdict(agree, het_p),
+                "replication": _verdict(agree, het_p, conc.get("same_direction")),
                 "strata_tested": len(strata),
             }
         )
@@ -450,34 +454,67 @@ def tier_of(p: str | float | None) -> str:
     return tier(p)
 
 
-def _verdict(concordant: str, het_p: str | float | None) -> str:
+def _verdict(
+    concordant: str,
+    het_p: str | float | None,
+    same_direction: str | None = None,
+) -> str:
     """One word for "did this hold up", derived and labelled as such.
 
-    Deliberately coarse. The inputs are upstream's; the grouping is ours, which
-    is why the caller states it is derived rather than published.
+    Separates underpowered from discordant, because collapsing them is a real
+    scientific error and not a rounding of nuance: ANGPTL3 x LDL-C lowers LDL in
+    all five superpopulations, but AFR (p=0.11) and SAS miss nominal
+    significance on sample size alone. Reporting that as "partial" invites the
+    reader to hear "does not replicate", when the directions are unanimous.
+
+    Deliberately coarse otherwise. The inputs are upstream's; the grouping is
+    ours, which is why the caller states it is derived rather than published.
     """
-    try:
-        agree, total = (int(x) for x in str(concordant).split("/"))
-    except (ValueError, AttributeError):
+    def _split(value: str | None) -> tuple[int, int] | None:
+        try:
+            a, b = (int(x) for x in str(value).split("/"))
+            return a, b
+        except (ValueError, AttributeError):
+            return None
+
+    parsed = _split(concordant)
+    if parsed is None:
         return "unknown"
+    agree, total = parsed
+    same = _split(same_direction)
+
     het = None
     if het_p is not None:
         het = 0.0 if str(het_p).startswith("<") else float(het_p)
+    heterogeneous = het is not None and het < 0.05
+
     if total and agree == total:
-        return "consistent" if het is None or het >= 0.05 else "consistent but heterogeneous"
+        return "consistent but heterogeneous" if heterogeneous else "consistent"
+    if same and same[0] == same[1]:
+        base = f"same direction in all {same[1]}, underpowered in {same[1] - agree}"
+        return base + (", heterogeneous" if heterogeneous else "")
     if agree == 0:
         return "not replicated"
-    return f"partial ({concordant})" + ("" if het is None or het >= 0.05 else ", heterogeneous")
+    return f"partial ({concordant})" + (", heterogeneous" if heterogeneous else "")
 
 
 def significant_pairs(payload: dict, max_p: float, test_idx: int) -> set[tuple[int, int]]:
     """(gene, trait) pairs clearing `max_p` in one ancestry shard.
 
-    The building block for "significant here but not there": the shards only hold
-    rows past the suggestive cutoff, so absence from this set means the pair did
-    not clear `max_p` in that stratum. Absence is NOT the same as "tested and
-    null" when the stratum was never analysed for that trait, which is why the
-    caller checks the trait's ancestry list before reporting a contrast.
+    The building block for "significant here but not there". The shards only hold
+    rows past the suggestive cutoff, so absence from this set has THREE possible
+    causes, and only the caller can tell them apart:
+
+      1. tested in that stratum, did not clear `max_p`;
+      2. the stratum was never analysed for that trait (the caller checks the
+         trait's ancestry list);
+      3. the gene had too few qualifying carriers to be tested at all in that
+         stratum, which is common outside Europe and indistinguishable from (1)
+         from this side.
+
+    Cause 3 is why a contrast is never on its own evidence of an ancestry-specific
+    effect: the comparison strata differ in size by an order of magnitude, so a
+    difference in significance is not a significant difference.
     """
     out: set[tuple[int, int]] = set()
     for i in range(payload["n"]):

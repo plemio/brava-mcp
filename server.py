@@ -257,7 +257,11 @@ async def gene_associations(
         "ancestry": ANCESTRY_LABEL.get(ancestry, "all strata"),
         "test": test_name,
         "total_matching": total,
-        "distinct_traits": len(rows) if collapse else None,
+        # trait x stratum when no ancestry filter is applied: there are only 44
+        # traits, so calling 280 rows "distinct traits" is a false label.
+        ("distinct_traits" if anc_idx is not None else "distinct_trait_strata"): (
+            len(rows) if collapse else None
+        ),
         "results": rows[offset : offset + limit],
         "note": f"{BETA_NOTE} {DISCLAIMER}",
     }
@@ -276,7 +280,7 @@ async def phenotype_associations(
     mask: str | None = None,
     maf: str | None = None,
     test: str = DEFAULT_TEST,
-    max_p: float = SIG_SUGGEST,
+    max_p: float | None = None,
     limit: int = 25,
     offset: int = 0,
     detailed: bool = False,
@@ -296,7 +300,10 @@ async def phenotype_associations(
         mask: Variant annotation mask (see `gene_associations`). Omit for all.
         maf: "<0.1%" or "<0.01%". Omit for both.
         test: Burden, SKAT, SKAT-O (default SKAT-O).
-        max_p: p-value ceiling (default 1e-4, the suggestive threshold).
+        max_p: p-value ceiling. Defaults to 1e-4 (the suggestive threshold) when
+            ranking a whole trait, and to NO ceiling when `genes` is given: a
+            candidate screen that hides the candidates which cleared nothing
+            answers the opposite of the question asked.
         limit: Max rows (default 25).
         offset: Skip this many rows, to page through a long result set.
         detailed: Fetch the full per-trait file to also return standard errors,
@@ -339,7 +346,16 @@ async def phenotype_associations(
             f"{', '.join(pheno['ancestries'])}."
         )
 
+    # Resolved here rather than in the signature: the right default depends on
+    # whether this is a ranking or a screen, and a plain default cannot tell
+    # "not passed" from "passed the same value".
+    screening = bool(genes)
+    if max_p is None:
+        max_p = 1.0 if screening else SIG_SUGGEST
+
     gene_idxs = None
+    wanted: list[str] = []
+    resolved: dict[str, int | None] = {}
     if genes:
         wanted = [g.strip() for g in genes.split(",") if g.strip()]
         resolved = {g: ix.resolve_gene(g) for g in wanted}
@@ -410,6 +426,19 @@ async def phenotype_associations(
     }
     if offset + limit < len(rows):
         out["next_offset"] = offset + limit
+    if screening:
+        shown = {r["gene"] for r in rows} | {r["ensg"] for r in rows}
+        absent = [
+            g for g in wanted
+            if g not in shown and ix.gene_info(resolved[g])["gene"] not in shown
+        ]
+        if absent:
+            # Never let a candidate vanish from a screen: silence reads as "not
+            # associated", the exact false negative this is meant to prevent.
+            out["no_result"] = (
+                f"{', '.join(absent)}: no row under the requested mask/MAF filters. "
+                "That is not the same as tested and null."
+            )
     if (mn := _mask_note(mask_idx)) :
         out["warning"] = mn
     return _emit(out, narrow=NARROW_PHENO, offset=offset)
@@ -478,11 +507,21 @@ async def gene_phenotype_detail(
 
     pheno = ix.phenotypes()[pidx]
 
+    unreachable: list[str] = []
+
     async def forest_for(idx: int) -> dict | None:
+        """None means "no results for this gene"; an outage is recorded apart.
+
+        Collapsing the two made an R2 outage report as "this gene has no BRaVa
+        results", which is a claim about biology drawn from a network failure.
+        """
         info = ix.gene_info(idx)
         try:
             payload = await client.gene_payload(info["ensg"])
-        except (client.NotFound, client.Unavailable):
+        except client.NotFound:
+            return None
+        except client.Unavailable:
+            unreachable.append(info["gene"])
             return None
         return q.forest(
             payload, pheno, pheno_idx=pidx, mask_idx=mask_idx,
@@ -503,6 +542,12 @@ async def gene_phenotype_detail(
             g for g, res in zip(resolved, results) if not res or not res["strata"]
         ]
         if not pairs:
+            if unreachable:
+                return _err(
+                    f"BRaVa data is temporarily unreachable for "
+                    f"{', '.join(unreachable)}. A fetch failure, not an absence of "
+                    "results; retry."
+                )
             return _err(
                 f"None of those genes has a {MASK_LABEL[mask_idx]} / "
                 f"{MAF_LABEL[maf_idx]} result for {pheno['name']}."
@@ -521,8 +566,14 @@ async def gene_phenotype_detail(
             "this tool with a single gene for its full per-ancestry forest.",
             "note": f"{BETA_NOTE} {DISCLAIMER}",
         }
+        missing = [g for g in missing if g not in unreachable]
         if missing:
             out["no_result"] = ", ".join(missing)
+        if unreachable:
+            out["unreachable"] = (
+                f"{', '.join(unreachable)}: could not be fetched. Not an absence of "
+                "results; retry for these."
+            )
         if (mn := _mask_note(mask_idx)):
             out["warning"] = mn
         return _emit(out, narrow="a shorter gene list")
@@ -532,6 +583,11 @@ async def gene_phenotype_detail(
     info = ix.gene_info(gidx)
     result = await forest_for(gidx)
     if result is None:
+        if unreachable:
+            return _err(
+                f"BRaVa data is temporarily unreachable for {info['gene']}. A fetch "
+                "failure, not an absence of results; retry."
+            )
         return _err(f"{info['gene']} ({info['ensg']}) has no BRaVa results.")
     if not result["strata"]:
         return _err(
@@ -771,7 +827,7 @@ async def variants(
 
     # ---- genome-wide scan -------------------------------------------------
     if gene is None:
-        if ancestry and ancestry != DEFAULT_ANCESTRY:
+        if ancestry and ancestry.strip().lower() != DEFAULT_ANCESTRY.lower():
             return _err(
                 "The genome-wide variant scan is published for the cross-ancestry "
                 f"meta only. Pass a gene to see {ancestry} strata, or drop ancestry."

@@ -8,7 +8,7 @@ bundled but never wired to a tool.
 import pytest
 
 import server
-from brava import index as ix, query as q
+from brava import client, index as ix, query as q
 
 pytestmark = pytest.mark.network
 
@@ -97,9 +97,28 @@ class TestAncestrySpecificDiscovery:
 
     async def test_absence_through_never_being_analysed_is_flagged(self):
         # Some traits have no EAS stratum at all. Reporting those as "specific to
-        # AFR" would turn missing data into a finding.
+        # AFR" would turn missing data into a finding. Asserted on its own, not
+        # as an alternative to the always-present contrast line.
         out = await server.top_associations(ancestry="AFR", absent_in="EAS", limit=25)
-        assert "never analysed" in out or "Clears p<" in out
+        assert "never analysed" in out
+
+    async def test_an_outage_is_not_reported_as_an_absence(self):
+        # A fetch failure that reads as "this gene has no results" is a claim
+        # about biology drawn from a network error.
+        original = client.gene_payload
+
+        async def unavailable(*args, **kwargs):
+            raise client.Unavailable("simulated outage")
+
+        client.gene_payload = unavailable
+        try:
+            single = await server.gene_phenotype_detail("PCSK9", "LDLC")
+            listed = await server.gene_phenotype_detail("PCSK9,LDLR", "LDLC")
+        finally:
+            client.gene_payload = original
+        for out in (single, listed):
+            assert "unreachable" in out
+            assert "has no BRaVa results" not in out
 
 
 class TestGenomeWideVariantScan:
@@ -178,12 +197,19 @@ class TestBatchReplicationScreen:
         out = await server.gene_phenotype_detail("PCSK9,LDLR", "LDLC")
         assert "not a published statistic" in out
 
-    async def test_partial_replication_is_distinguished_from_consistent(self):
-        # ABCG5 replicates in 3 of 5 superpopulations; reporting that as
-        # "replicated" would overstate it.
+    async def test_underpowered_is_not_reported_as_discordant(self):
+        # ABCG5 raises LDL in all five superpopulations but reaches nominal
+        # significance in three. Calling that "partial" invites the reader to
+        # hear "does not replicate", when the directions are unanimous and two
+        # strata are simply small. The distinction is the finding.
         out = await server.gene_phenotype_detail("PCSK9,ABCG5", "LDLC")
-        assert "consistent" in out
-        assert "partial" in out
+        assert "consistent" in out                    # PCSK9: 5/5 significant
+        assert "same direction in all 5" in out       # ABCG5: 3/5 significant
+        assert "underpowered" in out
+
+    async def test_the_direction_count_is_reported_alongside_the_significant_one(self):
+        out = await server.gene_phenotype_detail("ABCG5,PCSK9", "LDLC")
+        assert "same_dir" in out
 
     async def test_an_over_long_list_says_what_to_do(self):
         out = await server.gene_phenotype_detail(",".join(["PCSK9"] * 30), "LDLC")
@@ -195,11 +221,23 @@ class TestCandidateScreening:
     async def test_exact_p_for_every_candidate_significant_or_not(self):
         # The screening question is "what is each candidate's p", including the
         # ones that clear nothing. The bundled index only holds p < 1e-4.
+        # Deliberately no max_p: the default must not hide a candidate that
+        # cleared nothing, which is the whole question a screen asks.
         out = await server.phenotype_associations(
-            "LDLC", genes="PCSK9,ACAN", detailed=True, max_p=1.0, limit=5
+            "LDLC", genes="PCSK9,ACAN", detailed=True, limit=5
         )
         assert "PCSK9" in out and "ACAN" in out
+        assert "0.295" in out
         assert "ns" in out
+
+    async def test_a_candidate_with_no_row_at_all_is_named(self):
+        # Silence is the failure mode here: an absent candidate must never be
+        # indistinguishable from one that was tested and found null.
+        out = await server.phenotype_associations(
+            "LDLC", genes="PCSK9,ACAN", mask="pLoF", maf="<0.1%", detailed=True
+        )
+        assert "PCSK9" in out
+        assert "ACAN" in out or "no_result" in out
 
 
 class TestProvenance:
