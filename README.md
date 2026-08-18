@@ -40,19 +40,22 @@ WHERE a.ancestry='AFR' AND a.p_skato < 2.5e-6 AND NOT EXISTS (
 | `gene_phenotype_detail` | Cross-ancestry replication for a gene-trait pair, or a screen over a hit list |
 | `variants` | Single-variant results, genome-wide for a trait or inside one gene |
 
-Only two things stayed tools. `gene_phenotype_detail` because the concordance
-count must exclude `All` and `non_EUR`, which pool the same individuals as the
-strata being counted: the obvious SQL double-counts and looks entirely
-reasonable. `variants` because the variant-level release is a separate, actively
-changing upstream format, an order of magnitude larger, and rebuilt often enough
-that a local copy would be stale within the week.
+The three non-query tools cover what SQL cannot.
 
-`schema()` is the third thing SQL cannot supply: the traps. Effect sizes that
-belong to a different test than the p-value beside them, a mask that is a
-calibration control rather than a biological category, ancestry strata that
-overlap, p-values of exactly zero that mean the strongest result rather than a
-missing one. Several of those invert an answer rather than degrade it, and
-several were made during this server's own development.
+`gene_phenotype_detail`, because the concordance count must exclude `All` and
+`non_EUR`, which pool the same individuals as the strata being counted: the
+obvious SQL double-counts and looks entirely reasonable.
+
+`variants`, because the variant-level release is a separate upstream format, an
+order of magnitude larger and rebuilt often enough that a local copy would be
+stale within the week.
+
+`schema()`, because a syntactically perfect query can still be scientifically
+wrong here. Effect sizes belong to a different test than the p-value beside them,
+one mask is a calibration control rather than a biological category, ancestry
+strata overlap, and a p-value of exactly zero is the strongest result rather than
+a missing one. Several of those invert an answer instead of degrading it, which
+is why they travel with the columns rather than sitting in a README.
 
 ## The database
 
