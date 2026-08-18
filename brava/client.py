@@ -3,7 +3,7 @@
 Everything answerable from the bundled metadata is answered in `index`; this
 module is only reached for a SPECIFIC gene's or trait's detail file.
 
-Traffic discipline — this is a commitment we made to the upstream author, whose
+Traffic discipline. This is a commitment we made to the upstream author, whose
 data sits on a personal Cloudflare R2 free tier with hard monthly ceilings:
 
   * every fetched file is cached on disk FOREVER by default. The v1 gene-level
@@ -14,7 +14,7 @@ data sits on a personal Cloudflare R2 free tier with hard monthly ceilings:
   * a semaphore keeps us from ever looking like a scraper.
 
 Pointing BRAVA_DATA_BASE_URL / BRAVA_META_BASE_URL / BRAVA_VARIANT_BASE_URL at a
-mirror moves all of this off the upstream bucket with no code change — the same
+mirror moves all of this off the upstream bucket with no code change, the same
 escape hatch upstream gives its own frontend via VITE_DATA_BASE_URL.
 """
 
@@ -41,7 +41,7 @@ VARIANT_BASE = os.getenv("BRAVA_VARIANT_BASE_URL", f"{DATA_BASE}/v2").rstrip("/"
 CACHE_DIR = Path(
     os.getenv("BRAVA_CACHE_DIR", Path.home() / ".cache" / "brava-mcp")
 )
-# 0 (the default) means "never expire" — correct for immutable release data.
+# 0 (the default) means "never expire", correct for immutable release data.
 CACHE_TTL = int(os.getenv("BRAVA_CACHE_TTL", "0"))
 
 USER_AGENT = os.getenv(
@@ -156,21 +156,21 @@ async def fetch_json(url: str) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# Typed accessors — the only places that know the upstream path layout
+# Typed accessors: the only places that know the upstream path layout
 # ---------------------------------------------------------------------------
 
 async def gene_payload(ensg: str) -> dict:
-    """gene/{ENSG}.json — every result row for one gene."""
+    """gene/{ENSG}.json holds every result row for one gene."""
     return await fetch_json(f"{DATA_BASE}/gene/{ensg}.json")
 
 
 async def phenotype_payload(pheno_id: str, ancestry: str) -> dict:
-    """phenotype/{P}.{ANC}.json — every gene for one trait x ancestry (~2.3 MB)."""
+    """phenotype/{P}.{ANC}.json holds every gene for one trait x ancestry (~2.3 MB)."""
     return await fetch_json(f"{DATA_BASE}/phenotype/{pheno_id}.{ancestry}.json")
 
 
 async def gene_variants_payload(ensg: str, pheno_idx: int | None, split: bool) -> dict:
-    """v2/variant/gene/{ENSG}[.{pheno_idx}].json — all-meta variants for a gene.
+    """v2/variant/gene/{ENSG}[.{pheno_idx}].json holds the all-meta variants for a gene.
 
     Oversized genes are served per-phenotype; `split` comes from the bundled
     variant_split.json manifest.
@@ -180,7 +180,7 @@ async def gene_variants_payload(ensg: str, pheno_idx: int | None, split: bool) -
 
 
 async def gene_variants_anc_payload(ensg: str, pheno_idx: int | None, split: bool) -> dict:
-    """v2/variant/gene/{ENSG}[.{pheno_idx}].anc.json — the non-meta strata."""
+    """v2/variant/gene/{ENSG}[.{pheno_idx}].anc.json holds the non-meta strata."""
     name = f"{ensg}.{pheno_idx}" if split else ensg
     return await fetch_json(f"{VARIANT_BASE}/variant/gene/{name}.anc.json")
 

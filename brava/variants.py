@@ -3,7 +3,7 @@
 The v2 wire format is denser than the gene-level one: coordinates are stored
 ONCE per file in a shared table (pos/ref/alt), and every per-phenotype or
 per-ancestry slice references them by integer index. Decoding therefore means
-joining a slice back onto that table — get it wrong and you silently attribute
+joining a slice back onto that table. Get it wrong and you silently attribute
 a statistic to the wrong variant, which is the worst failure mode available
 here. Hence a separate, fully testable module.
 
@@ -12,7 +12,7 @@ re-uploaded all ~170k variant objects twice on 2026-08-17. Callers must degrade
 gracefully rather than assume the shape holds.
 
 Per-variant `ed` is a per-biobank effect-direction string (one character per
-contributing biobank: '+', '-', or '?' for absent) — the cross-biobank
+contributing biobank: '+', '-', or '?' for absent), the cross-biobank
 replication signal that no single-programme resource can provide.
 """
 
@@ -32,7 +32,7 @@ def decode_anc_mask(mask: int | None) -> str:
 
     Bit i is SUPERPOPS[i]; one bit past them flags "reached the pooled non-EUR
     meta only". A variant with none of the superpop bits but the non-EUR bit set
-    is NOT 'no ancestry data' — it is 'non-EUR only', and conflating the two
+    is NOT 'no ancestry data'. It is 'non-EUR only', and conflating the two
     was a bug upstream fixed on 2026-08-17.
     """
     if mask is None:

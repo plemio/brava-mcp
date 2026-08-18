@@ -1,4 +1,4 @@
-"""Variant-level (v2) decoding — the densest and least stable wire format."""
+"""Variant-level (v2) decoding: the densest and least stable wire format."""
 
 from brava import index as ix, variants as vq
 from brava.constants import NON_EUR_BIT, SUPERPOPS

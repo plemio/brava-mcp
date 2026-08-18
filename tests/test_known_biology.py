@@ -1,6 +1,6 @@
 """End-to-end checks against associations that are not in doubt.
 
-Decoding bugs do not announce themselves — a transposed index yields a
+Decoding bugs do not announce themselves: a transposed index yields a
 plausible-looking number. These anchor the pipeline on findings whose direction
 and rough magnitude are established, so a silent mis-join becomes a test
 failure. Mirrors upstream's own pipeline/tests/test_known_biology.py.
@@ -38,12 +38,12 @@ class TestPCSK9LowersLDL:
     async def test_direction_holds_in_every_ancestry(self):
         out = await server.gene_phenotype_detail("PCSK9", "LDLC", mask="pLoF", maf="<0.1%")
         assert "5/5" in out              # all five superpopulations concordant
-        assert out.count("lower-") == 7  # and all seven strata point the same way
+        assert out.count("lowers") == 7  # and all seven strata point the same way
         await client.close()
 
     async def test_variant_level_reproduces_the_gene_level_direction(self):
         out = await server.gene_variants("PCSK9", "LDLC", max_p=1e-8, limit=5)
-        assert "lower-" in out
+        assert "lowers" in out
         assert "concordant" in out
         await client.close()
 

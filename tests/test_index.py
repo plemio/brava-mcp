@@ -17,7 +17,7 @@ class TestGeneResolution:
 
     def test_exact_symbol_outranks_a_substring_coincidence(self):
         # Without explicit ranking a substring hit can win purely by sitting
-        # earlier in the array — upstream hit and fixed exactly this.
+        # earlier in the array. Upstream hit and fixed exactly this.
         hits = ix.search_genes("PCSK9", 10)
         assert hits[0]["gene"] == "PCSK9"
         assert hits[0]["match"] == "exact symbol"
@@ -38,7 +38,7 @@ class TestPhenotypeResolution:
         assert ix.phenotypes()[ix.resolve_phenotype(q)]["id"] == "LDLC"
 
     def test_ambiguous_substring_refuses_to_guess(self):
-        # "cholesterol" matches LDL, HDL and total — answering one of them
+        # "cholesterol" matches LDL, HDL and total, and answering one of them
         # silently would be worse than saying nothing.
         assert ix.resolve_phenotype("cholesterol") is None
 

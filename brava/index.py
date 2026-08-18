@@ -214,7 +214,7 @@ def search_phenotypes(query: str, limit: int) -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# Vocabulary resolution — accept what a human would type
+# Vocabulary resolution: accept what a human would type
 # ---------------------------------------------------------------------------
 
 def resolve_ancestry(value: str | None) -> int | None:

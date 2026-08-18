@@ -42,6 +42,64 @@ mcp = FastMCP("BRaVa")
 
 DISCLAIMER = "Summary statistics from the BRaVa flagship paper. Not for clinical use."
 
+# Every character of a response crosses the model's context. 25k is the fleet
+# budget; an unbounded gene PheWAS at limit=200 with all_tests measured 74k.
+CHARACTER_LIMIT = 25_000
+
+# Which parameters would actually shrink an over-budget response, per tool. The
+# truncation note names them so the model narrows instead of blindly retrying.
+NARROW_GENE = "mask=, maf=, ancestry= or max_p="
+NARROW_PHENO = "mask=, maf= or a smaller max_p"
+
+# Read-only, no side effects, and reaching a public dataset outside our control.
+READ_ONLY = {"readOnlyHint": True, "idempotentHint": True, "openWorldHint": True}
+
+
+def _emit(
+    payload: dict,
+    rows_key: str = "results",
+    narrow: str = "",
+    offset: int = 0,
+) -> str:
+    """Serialise, and if the result busts the budget, drop rows and say how to narrow.
+
+    A bare truncation teaches the model nothing and invites a blind retry, so the
+    note names the parameters that would actually shrink the answer and the offset
+    that continues it. `next_offset` is rewritten to match, otherwise the two
+    would disagree and the model would silently skip the dropped rows.
+
+    Row widths vary enough (a 44-trait PheWAS row is not a 3-column catalogue row)
+    that a single proportional estimate wastes half the budget, so this binary
+    searches for the largest row count that fits.
+    """
+    out = toons.dumps(payload)
+    rows = payload.get(rows_key)
+    if len(out) <= CHARACTER_LIMIT or not isinstance(rows, list) or len(rows) <= 1:
+        return out
+
+    def render(count: int) -> str:
+        trial = {**payload, rows_key: rows[:count]}
+        trial["truncated"] = (
+            f"Response exceeded the {CHARACTER_LIMIT}-character budget: showing "
+            f"{count} of {len(rows)} rows. Continue with offset={offset + count}"
+            + (f", or narrow with {narrow}." if narrow else ".")
+        )
+        if offset + count < offset + len(rows):
+            trial["next_offset"] = offset + count
+        else:
+            trial.pop("next_offset", None)
+        return toons.dumps(trial)
+
+    lo, hi, best = 1, len(rows) - 1, render(1)
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        candidate = render(mid)
+        if len(candidate) <= CHARACTER_LIMIT:
+            best, lo = candidate, mid + 1
+        else:
+            hi = mid - 1
+    return best
+
 
 def _err(message: str) -> str:
     """Errors are guidance: say what went wrong AND what to do instead."""
@@ -60,7 +118,7 @@ def _mask_note(mask_idx: int | None) -> str | None:
 
 # ---------------------------------------------------------------------------
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def search(query: str, limit: int = 10) -> str:
     """Resolve a gene or trait name to the identifiers every other BRaVa tool needs.
 
@@ -71,7 +129,7 @@ async def search(query: str, limit: int = 10) -> str:
     substring.
 
     Args:
-        query: Free text — gene symbol / Ensembl id / trait id / trait name.
+        query: Free text (gene symbol / Ensembl id / trait id / trait name).
         limit: Max results per category (default 10).
 
     Returns: matching genes (symbol, Ensembl id, GRCh38 position) and matching
@@ -83,12 +141,12 @@ async def search(query: str, limit: int = 10) -> str:
     if not genes and not traits:
         return _err(
             f"No gene or trait matches '{query}'. BRaVa covers 20,033 genes and 44 "
-            "harmonised traits — call catalog(kind='phenotypes') to see the trait list."
+            "harmonised traits. Call catalog(kind='phenotypes') to see the trait list."
         )
     return toons.dumps({"genes": genes, "traits": traits})
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def gene_associations(
     gene: str,
     ancestry: str = DEFAULT_ANCESTRY,
@@ -97,6 +155,7 @@ async def gene_associations(
     test: str = DEFAULT_TEST,
     max_p: float | None = None,
     limit: int = 25,
+    offset: int = 0,
     all_tests: bool = False,
 ) -> str:
     """Phenome-wide association scan for ONE gene: which traits is it associated with?
@@ -105,20 +164,22 @@ async def gene_associations(
     traits, for a chosen ancestry stratum. Results are ranked by p-value.
 
     Use `gene_phenotype_detail` afterwards to check whether a hit replicates
-    across ancestries and biobanks — that cross-biobank view is what BRaVa
+    across ancestries and biobanks. That cross-biobank view is what BRaVa
     uniquely provides.
 
     Args:
         gene: Gene symbol or Ensembl id (resolve with `search` if unsure).
         ancestry: All (cross-ancestry meta, default), EUR, AFR, AMR, EAS, SAS,
             non_EUR. Pass "" for every stratum at once.
-        mask: Variant annotation mask — "pLoF", "damaging missense",
+        mask: Variant annotation mask, one of "pLoF", "damaging missense",
             "other missense", "synonymous", "pLoF | damaging missense",
             "all variants". Omit for all masks.
         maf: Minor-allele-frequency cutoff, "<0.1%" or "<0.01%". Omit for both.
         test: Burden, SKAT, or SKAT-O (default: SKAT-O, the primary omnibus test).
         max_p: Only return associations at or below this p-value.
         limit: Max rows (default 25).
+        offset: Skip this many rows, to page through a long result set. The
+            response reports total_matching and next_offset.
         all_tests: Also return the other two tests' p-values per row.
 
     Returns: trait, category, mask, MAF, p-value, significance tier, effect size
@@ -143,7 +204,7 @@ async def gene_associations(
         payload = await client.gene_payload(info["ensg"])
     except client.NotFound:
         return _err(
-            f"{info['gene']} ({info['ensg']}) has no BRaVa results — it is in the Ensembl "
+            f"{info['gene']} ({info['ensg']}) has no BRaVa results. It is in the Ensembl "
             "gene list but was not tested (too few qualifying rare variants)."
         )
     except client.Unavailable as exc:
@@ -166,15 +227,17 @@ async def gene_associations(
         "ancestry": ANCESTRY_LABEL.get(ancestry, "all strata"),
         "test": test_name,
         "total_matching": len(rows),
-        "results": rows[:limit],
+        "results": rows[offset : offset + limit],
         "note": DISCLAIMER,
     }
+    if offset + limit < len(rows):
+        out["next_offset"] = offset + limit
     if (mn := _mask_note(mask_idx)) :
         out["warning"] = mn
-    return toons.dumps(out)
+    return _emit(out, narrow=NARROW_GENE, offset=offset)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def phenotype_associations(
     phenotype: str,
     ancestry: str = DEFAULT_ANCESTRY,
@@ -183,6 +246,7 @@ async def phenotype_associations(
     test: str = DEFAULT_TEST,
     max_p: float = SIG_SUGGEST,
     limit: int = 25,
+    offset: int = 0,
     detailed: bool = False,
     collapse: bool = True,
 ) -> str:
@@ -200,6 +264,7 @@ async def phenotype_associations(
         test: Burden, SKAT, SKAT-O (default SKAT-O).
         max_p: p-value ceiling (default 1e-4, the suggestive threshold).
         limit: Max rows (default 25).
+        offset: Skip this many rows, to page through a long result set.
         detailed: Fetch the full per-trait file to also return standard errors,
             95% CIs and heterogeneity p-values. Required for max_p above 1e-4;
             slower, and the only path that leaves the process.
@@ -282,17 +347,19 @@ async def phenotype_associations(
         "test": test_name,
         "total_matching": total,
         "distinct_genes": len(rows) if collapse else None,
-        "results": rows[:limit],
+        "results": rows[offset : offset + limit],
         "source": source
         + ("; showing each gene's most significant mask/MAF only" if collapse else ""),
         "note": DISCLAIMER,
     }
+    if offset + limit < len(rows):
+        out["next_offset"] = offset + limit
     if (mn := _mask_note(mask_idx)) :
         out["warning"] = mn
-    return toons.dumps(out)
+    return _emit(out, narrow=NARROW_PHENO, offset=offset)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def gene_phenotype_detail(
     gene: str,
     phenotype: str,
@@ -319,7 +386,7 @@ async def gene_phenotype_detail(
 
     Returns: one row per ancestry stratum (sample size, p, beta, SE, 95% CI,
     direction), plus heterogeneity and a concordance count. The concordance
-    count is DERIVED by this server from upstream's numbers — it is not itself
+    count is DERIVED by this server from upstream's numbers. It is not itself
     a published statistic.
     """
     gidx = ix.resolve_gene(gene)
@@ -379,7 +446,7 @@ async def gene_phenotype_detail(
     return toons.dumps(out)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def top_associations(
     ancestry: str = DEFAULT_ANCESTRY,
     category: str | None = None,
@@ -389,30 +456,38 @@ async def top_associations(
     test: str = DEFAULT_TEST,
     max_p: float = SIG_GENE_CAUCHY,
     limit: int = 25,
+    offset: int = 0,
     collapse: bool = True,
+    group_by: str | None = None,
 ) -> str:
     """Strongest rare-variant associations ACROSS traits and genes.
 
     Answers cross-cutting questions the per-gene and per-trait views cannot:
     "the strongest rare-variant signals in cardiovascular disease", "which
     traits does this gene hit at exome-wide significance", "what are the most
-    pleiotropic genes". Served entirely from the bundled index — no network.
+    pleiotropic genes". Served entirely from the bundled index, with no network access.
 
     Args:
         ancestry: All (default), EUR, AFR, AMR, EAS, SAS, non_EUR.
         category: Trait category filter, e.g. "Cardiovascular", "Lipids",
             "Endocrine/Metabolic" (see catalog(kind='phenotypes')).
         trait_type: "binary" or "quantitative".
-        gene: Restrict to one gene — the fast way to ask which traits it hits.
+        gene: Restrict to one gene. The fast way to ask which traits it hits.
         mask: Variant annotation mask. Omit for all.
         test: Burden, SKAT, SKAT-O (default SKAT-O).
         max_p: p-value ceiling, default 2.5e-6 (the gene-level threshold).
             Cannot exceed 1e-4, the bundled index's inclusion cutoff.
         limit: Max rows (default 25).
+        offset: Skip this many rows, to page through a long result set.
         collapse: Return each gene-trait pair once, at its most significant
             mask/MAF (default true). Set false for every combination tested.
+        group_by: "gene" ranks genes by how many distinct traits they hit
+            (pleiotropy); "trait" ranks traits by how many distinct genes reach
+            the threshold. Omit for the flat list of individual associations.
 
     Returns: gene, trait, category, mask, MAF, test, p-value, tier and effect.
+    With group_by, instead returns one row per gene (or trait) with its partner
+    count, its strongest partner and p-value, and the partners themselves.
     """
     limit = max(1, min(limit, 200))
     if max_p > SIG_SUGGEST:
@@ -447,29 +522,42 @@ async def top_associations(
         trait_type=trait_type,
         max_p=max_p,
     )
+    if group_by is not None and group_by not in ("gene", "trait"):
+        return _err(
+            f"Unknown group_by '{group_by}'. Valid: 'gene' (rank genes by how many "
+            "traits they hit) or 'trait' (rank traits by how many genes reach the "
+            "threshold). Omit it for the flat association list."
+        )
+
     total = len(rows)
-    if collapse:
+    # Aggregation needs one row per pair, so the dedupe is not optional there.
+    if collapse or group_by:
         rows = q.collapse_best(rows, ("ensg", "trait_id"))
+    pairs = len(rows)
+    if group_by:
+        rows = q.aggregate(rows, group_by)
 
     if not rows and category:
         cats = sorted({p["category"] for p in ix.phenotypes()})
         return _err(
             f"No results for category '{category}'. Valid categories: {', '.join(cats)}."
         )
-    return toons.dumps(
-        {
-            "ancestry": ANCESTRY_LABEL[ANCESTRIES[anc_idx]],
-            "test": test_name,
-            "p_threshold": max_p,
-            "total_matching": total,
-            "distinct_pairs": len(rows) if collapse else None,
-            "results": rows[:limit],
-            "note": DISCLAIMER,
-        }
-    )
+    out = {
+        "ancestry": ANCESTRY_LABEL[ANCESTRIES[anc_idx]],
+        "test": test_name,
+        "p_threshold": max_p,
+        "total_matching": total,
+        "distinct_pairs": pairs,
+        "grouped_by": group_by,
+        "results": rows[offset : offset + limit],
+        "note": DISCLAIMER,
+    }
+    if offset + limit < len(rows):
+        out["next_offset"] = offset + limit
+    return _emit(out, narrow="category=, trait_type=, mask= or a smaller max_p", offset=offset)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def gene_variants(
     gene: str,
     phenotype: str,
@@ -480,8 +568,8 @@ async def gene_variants(
     """Single-variant results inside a gene, with per-biobank replication.
 
     Drops from gene-level burden testing down to the individual variants driving
-    a signal. Each row carries the per-biobank effect-direction tally — the
-    cross-biobank replication evidence no single-programme browser can show —
+    a signal. Each row carries the per-biobank effect-direction tally, the
+    cross-biobank replication evidence no single-programme browser can show,
     plus a gnomAD link for allele frequency, which BRaVa itself does not carry.
 
     Args:
@@ -567,7 +655,7 @@ async def gene_variants(
             }
         )
 
-    return toons.dumps(
+    return _emit(
         {
             "gene": info["gene"],
             "ensg": info["ensg"],
@@ -578,11 +666,12 @@ async def gene_variants(
             "results": rows,
             "note": f"'biobanks' counts concordant effect directions across contributing "
             f"cohorts; '?' marks a cohort where the variant was absent. {DISCLAIMER}",
-        }
+        },
+        narrow="a smaller max_p",
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def catalog(kind: str = "phenotypes") -> str:
     """What BRaVa covers: traits, contributing biobanks, or the analysis vocabulary.
 
@@ -615,7 +704,7 @@ async def catalog(kind: str = "phenotypes") -> str:
                 }
             )
         rows.sort(key=lambda r: (r["category"], r["trait"]))
-        return toons.dumps({"traits": rows, "total": len(rows), "note": DISCLAIMER})
+        return _emit({"traits": rows, "total": len(rows), "note": DISCLAIMER}, "traits")
 
     if kind in ("biobanks", "biobank", "cohorts"):
         rows = [
@@ -631,7 +720,7 @@ async def catalog(kind: str = "phenotypes") -> str:
             for b in ix.biobanks()
         ]
         rows.sort(key=lambda r: -(r["n"] or 0))
-        return toons.dumps({"biobanks": rows, "total": len(rows)})
+        return _emit({"biobanks": rows, "total": len(rows)}, "biobanks")
 
     if kind in ("vocabulary", "vocab", "masks", "tests"):
         return toons.dumps(
@@ -659,7 +748,7 @@ async def catalog(kind: str = "phenotypes") -> str:
                     "beta > 0 increases risk (binary) or the trait value (quantitative); beta < 0 decreases it.",
                     "beta and SE come from the inverse-variance-weighted Burden meta-analysis, "
                     "even when the reported p-value is SKAT or SKAT-O.",
-                    "BRaVa carries no allele frequencies and no common-variant GWAS — "
+                    "BRaVa carries no allele frequencies and no common-variant GWAS. "
                     "use gnomAD and the GWAS Catalog for those.",
                 ],
                 "paper": PAPER_URL,

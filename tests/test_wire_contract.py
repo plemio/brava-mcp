@@ -2,12 +2,12 @@
 
 The published payloads encode every categorical dimension as an integer index
 into the canonical lists in `brava.constants`. Upstream documents that contract
-as APPEND, NEVER REORDER — but it is their repo, not ours, and a reordering
+as APPEND, NEVER REORDER, but it is their repo, not ours, and a reordering
 would not raise: it would silently relabel results, attributing a p-value to the
 wrong mask or the wrong ancestry. That is the failure mode worth a network test.
 
 If one of these fails, the fix is to append to `constants` and to open an issue
-upstream — never to quietly re-map an index.
+upstream, never to quietly re-map an index.
 """
 
 import pytest

@@ -5,12 +5,13 @@ META_BASE = https://nikbaya.github.io/brava_browser/data/meta
 META_FILES = genes.json phenotypes.json biobanks.json pheno_sizes.json variant_split.json
 ANCESTRIES = All EUR AFR AMR EAS SAS non_EUR
 
-.PHONY: help sync test test-all serve refresh-meta
+.PHONY: help sync test test-all eval serve refresh-meta
 
 help:
 	@echo "sync         install dependencies"
 	@echo "test         offline suite (no network)"
 	@echo "test-all     offline + live-data suite"
+	@echo "eval         10 benchmark questions against fixed gold answers"
 	@echo "serve        run the HTTP daemon on MCP_PORT (default 3163)"
 	@echo "refresh-meta re-download the bundled metadata indexes"
 
@@ -22,6 +23,9 @@ test:
 
 test-all:
 	$(UV) run pytest -q
+
+eval:
+	$(UV) run python evals/selfcheck.py
 
 serve:
 	MCP_TRANSPORT=http MCP_PORT=$${MCP_PORT:-3163} $(UV) run python server.py

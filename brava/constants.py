@@ -1,4 +1,4 @@
-"""Canonical orderings — a WIRE CONTRACT mirrored from the BRaVa browser ETL.
+"""Canonical orderings: a WIRE CONTRACT mirrored from the BRaVa browser ETL.
 
 Integer indices into these lists are the compact keys used throughout the
 published JSON, so the order here must match, exactly and in the same order:
@@ -79,7 +79,7 @@ TEST_LP_KEY: dict[str, str] = {
 }
 
 # --- significance thresholds (BRaVa flagship paper) --------------------------
-SIG_GENE_MASK_BONFERRONI = 1.39e-7  # gene x mask Bonferroni — the strict line
+SIG_GENE_MASK_BONFERRONI = 1.39e-7  # gene x mask Bonferroni, the strict line
 SIG_GENE_CAUCHY = 2.5e-6            # gene-level Cauchy (0.05 / ~20,000 genes)
 SIG_SUGGEST = 1e-4                  # suggestive; the all_results inclusion cutoff
 SIG_VARIANT = 1.82e-8               # variant-level, 0.05 / 2,746,957

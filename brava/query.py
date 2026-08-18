@@ -1,8 +1,8 @@
-"""Pure decode / filter / rank / label logic. Stdlib only — no network, no I/O.
+"""Pure decode / filter / rank / label logic. Stdlib only, no network and no I/O.
 
 The published BRaVa payloads are COLUMNAR: parallel arrays of integer indices
 into the canonical lists in `constants`. Nothing in here may leak that encoding
-outward — every function returns rows whose values are already labelled and
+outward: every function returns rows whose values are already labelled and
 human-meaningful (a p-value, not a -log10; "pLoF", not 0).
 
 Kept free of aiohttp/fastmcp so the whole decoding surface is unit-testable
@@ -36,7 +36,7 @@ def fmt_p(p: float | None) -> str | None:
     """p-value as a compact string.
 
     Serialising 1.58e-159 as a literal decimal costs ~170 characters for one
-    cell — the single largest token sink in this server's output, and the reason
+    cell, the single largest token sink in this server's output, and the reason
     this is not left to the encoder's default float rendering.
     """
     if p is None:
@@ -58,13 +58,51 @@ def format_pvalues(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
+def aggregate(rows: list[dict[str, Any]], by: str) -> list[dict[str, Any]]:
+    """Count how many distinct partners each gene (or trait) has, ranked.
+
+    "Which gene is significant for the most traits" and "which trait has the most
+    implicated genes" are questions the per-file layout cannot answer at all, and
+    that a paginating agent can only answer by pulling every row and tallying by
+    hand. Doing it here turns ~16 calls plus manual counting into one call, which
+    is the whole point of an outcome-shaped tool.
+
+    Rows must already be deduplicated to one per gene-trait pair and sorted by p
+    ascending, so the first row seen for a key is also its strongest.
+    """
+    key, partner, label = (
+        ("ensg", "trait", "traits") if by == "gene" else ("trait_id", "gene", "genes")
+    )
+    buckets: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        bucket = buckets.setdefault(
+            row[key],
+            {
+                "gene" if by == "gene" else "trait": row["gene" if by == "gene" else "trait"],
+                ("ensg" if by == "gene" else "trait_id"): row[key],
+                label: 0,
+                "strongest_p": row["p"],
+                f"strongest_{partner}": row[partner],
+                "partners": [],
+            },
+        )
+        bucket[label] += 1
+        bucket["partners"].append(row[partner])
+
+    out = list(buckets.values())
+    for bucket in out:
+        bucket[partner + "_list"] = ", ".join(bucket.pop("partners")[:12])
+    out.sort(key=lambda r: (-r[label], r["strongest_p"]))
+    return out
+
+
 def collapse_best(rows: list[dict[str, Any]], keys: tuple[str, ...]) -> list[dict[str, Any]]:
     """Keep only the most significant row per key tuple.
 
     Every (gene, trait) pair is tested under 6 masks x 2 MAF cutoffs, so an
     unfiltered ranking returns the same finding a dozen times over and crowds
     out the next real one. Rows MUST already be sorted by p ascending, which
-    makes "first seen" identical to "most significant" — this is a selection of
+    makes "first seen" identical to "most significant". This is a selection of
     upstream rows, not a new statistic.
     """
     seen: set[tuple] = set()
@@ -85,15 +123,18 @@ def collapse_best(rows: list[dict[str, Any]], keys: tuple[str, ...]) -> list[dic
 def effect_label(beta: float | None, trait_type: str) -> str | None:
     """Describe an effect direction in terms appropriate to the trait type.
 
-    Binary traits: risk-increasing vs protective. Quantitative traits: the
-    burden raises or lowers the trait value, with no good/bad connotation.
-    Mirrors upstream app/src/lib/effect.ts.
+    Binary traits: risk-increasing vs protective. Quantitative traits: the burden
+    raises or lowers the trait value, with no good/bad connotation. Mirrors
+    upstream app/src/lib/effect.ts.
+
+    Spelled as words rather than a +/- suffix: the sign is already carried by the
+    adjacent beta, so a symbol adds nothing and costs a reading step.
     """
     if beta is None or math.isnan(beta) or beta == 0:
         return None
     if trait_type == "binary":
-        return "risk+" if beta > 0 else "protective-"
-    return "higher+" if beta > 0 else "lower-"
+        return "risk-increasing" if beta > 0 else "protective"
+    return "raises" if beta > 0 else "lowers"
 
 
 def ci95(beta: float | None, se: float | None) -> tuple[float, float] | None:
@@ -107,7 +148,7 @@ def odds_ratio(beta: float | None, se: float | None) -> dict[str, float] | None:
     """OR = exp(beta) with its CI, for binary traits only.
 
     Meaningless for quantitative traits, where beta is already on the trait's
-    (standardised) scale — callers must gate on trait type.
+    (standardised) scale, so callers must gate on trait type.
     """
     if beta is None:
         return None
@@ -120,7 +161,7 @@ def odds_ratio(beta: float | None, se: float | None) -> dict[str, float] | None:
 
 
 def _sig(x: float | None, digits: int = 3) -> float | None:
-    """Round to `digits` significant figures — display precision, not storage."""
+    """Round to `digits` significant figures: display precision, not storage."""
     if x is None or x == 0 or math.isnan(x) or math.isinf(x):
         return x
     return round(x, -int(math.floor(math.log10(abs(x)))) + (digits - 1))
@@ -279,7 +320,7 @@ def all_results_rows(
     """Decode a bundled `all_results.{ANC}.json` shard.
 
     This shard holds every row clearing the suggestive cutoff (p < 1e-4) for one
-    ancestry, across ALL traits and genes — so it answers cross-trait questions
+    ancestry, across ALL traits and genes, so it answers cross-trait questions
     the per-file layout cannot, at zero network cost. `beta` is null outside the
     Burden test.
     """
@@ -337,7 +378,7 @@ def all_results_rows(
 # ---------------------------------------------------------------------------
 
 # Strata counted for concordance: the five superpopulations only. 'All' is the
-# meta being compared against, and 'non_EUR' pools four of the five — counting
+# meta being compared against, and 'non_EUR' pools four of the five. Counting
 # either would double-count the same individuals and inflate the tally.
 CONCORDANCE_STRATA = SUPERPOPS
 
@@ -356,7 +397,7 @@ def forest(
     This is the BRaVa-specific view: does the signal replicate across ancestry
     strata, and is it heterogeneous across contributing biobanks? Returns the
     per-stratum numbers plus a concordance tally that is explicitly flagged as
-    DERIVED — it is our summary of upstream's numbers, not a published statistic.
+    DERIVED: it is our summary of upstream's numbers, not a published statistic.
     """
     lp_key = TEST_LP_KEY[test]
     by_anc: dict[str, dict[str, Any]] = {}

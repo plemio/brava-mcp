@@ -1,0 +1,94 @@
+"""Output budget and pagination.
+
+Every character of a response crosses the model's context. An unbounded gene
+PheWAS at limit=200 with all_tests measured 74k characters, roughly 18k tokens
+for a single call, so the budget is enforced rather than trusted.
+"""
+
+import pytest
+import toons
+
+import server
+from brava import client
+
+pytestmark = pytest.mark.network
+
+
+class TestCharacterBudget:
+    async def test_a_deliberately_huge_request_is_bounded(self):
+        out = await server.gene_associations(
+            "PCSK9", ancestry="", limit=200, all_tests=True
+        )
+        assert len(out) <= server.CHARACTER_LIMIT
+
+    async def test_truncation_names_the_parameters_that_would_narrow_it(self):
+        # A bare cut teaches nothing and invites a blind retry.
+        out = await server.gene_associations(
+            "PCSK9", ancestry="", limit=200, all_tests=True
+        )
+        assert "truncated" in out
+        assert "mask=" in out
+        assert "offset=" in out
+
+    async def test_the_continuation_offset_agrees_with_the_truncation(self):
+        # If next_offset kept its pre-truncation value the model would page past
+        # the rows that were dropped, losing them silently.
+        out = await server.gene_associations(
+            "PCSK9", ancestry="", limit=200, offset=50, all_tests=True
+        )
+        shown = int(out.split("showing ")[1].split(" of ")[0])
+        stated = int(out.split("Continue with offset=")[1].split(",")[0])
+        next_offset = int(
+            [l for l in out.splitlines() if l.startswith("next_offset:")][0].split(":")[1]
+        )
+        assert stated == 50 + shown == next_offset
+
+    async def test_a_normal_call_is_nowhere_near_the_budget(self):
+        out = await server.gene_associations("PCSK9")
+        assert len(out) < 6000
+        assert "truncated" not in out
+
+
+class TestPagination:
+    async def test_offset_advances_the_window(self):
+        first = await server.top_associations(limit=3)
+        second = await server.top_associations(limit=3, offset=3)
+        assert first != second
+
+    async def test_next_offset_appears_only_while_rows_remain(self):
+        many = await server.top_associations(limit=3)
+        assert "next_offset" in many
+        # 44 traits, so a limit far past the total must not advertise another page.
+        few = await server.catalog("phenotypes")
+        assert "next_offset" not in few
+
+    async def test_paging_past_the_end_is_empty_not_an_error(self):
+        out = await server.gene_associations("PCSK9", offset=100_000)
+        assert "error" not in out
+        assert "results[0]" in out or "results:" in out
+
+
+class TestReadOnlyAnnotations:
+    async def test_every_tool_declares_itself_read_only(self):
+        # Nothing here writes anything, and all of it reaches a public dataset
+        # outside our control.
+        tools = await server.mcp.list_tools()
+        assert len(tools) == 7
+        for t in tools:
+            assert t.annotations.readOnlyHint is True, t.name
+            assert t.annotations.openWorldHint is True, t.name
+
+
+class TestAggregationPath:
+    async def test_pleiotropy_is_one_call_not_sixteen(self):
+        # Without group_by a model must page 388 rows at limit=25 and tally by
+        # hand. That is the "correct in 25 calls" failure the design avoids.
+        out = await server.top_associations(max_p=1.39e-7, group_by="gene", limit=3)
+        assert "PKD1" in out
+        assert "traits" in out
+        assert client.outbound_requests() == 0
+
+    async def test_an_unknown_grouping_names_the_valid_ones(self):
+        out = await server.top_associations(group_by="chromosome")
+        assert "error" in out
+        assert "'gene'" in out and "'trait'" in out

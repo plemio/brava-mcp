@@ -8,8 +8,8 @@ traits, 7 ancestry strata.
 It exists because no other MCP server covers rare-variant gene-based association
 results. gnomAD gives you allele frequencies and constraint; the GWAS Catalog
 gives you published common-variant associations; BRaVa gives you what rare coding
-variation in a gene does to a trait — and, uniquely, **whether that finding
-replicates across ancestries and biobanks**.
+variation in a gene does to a trait, plus something no single-programme resource
+can: **whether that finding replicates across ancestries and biobanks**.
 
 Summary statistics only. **Not for clinical use.**
 
@@ -21,9 +21,13 @@ Summary statistics only. **Not for clinical use.**
 | `gene_associations` | Phenome-wide scan: which traits is this gene associated with? |
 | `phenotype_associations` | Which genes carry rare-variant signal for this trait? |
 | `gene_phenotype_detail` | Does this hit replicate across ancestries and biobanks? |
-| `top_associations` | Strongest signals across traits — by category, type or gene |
+| `top_associations` | Strongest signals across traits, and pleiotropy: which genes hit the most traits (`group_by`) |
 | `gene_variants` | The individual variants driving a signal, with per-biobank concordance |
 | `catalog` | The 44 traits, the contributing biobanks, the analysis vocabulary |
+
+Every tool is read-only, paginates with `offset`/`next_offset`, and is capped at a
+25,000-character response. When a result is cut, the note names the parameters that
+would narrow it and the offset that continues it, rather than just truncating.
 
 ## Data source and traffic discipline
 
@@ -54,9 +58,18 @@ the upstream bucket entirely, with no code change.
 make sync                       # install
 make test                       # offline suite
 make test-all                   # + live-data checks (wire contract, known biology)
+make eval                       # 10 benchmark questions with fixed gold answers
 make serve                      # HTTP daemon on :3163
 uv run python server.py         # stdio
 ```
+
+`evals/questions.json` holds ten questions whose answers were resolved directly
+from the raw upstream files, independently of this server, so the benchmark
+cannot agree with a decoding bug. `evals/selfcheck.py` walks each one through the
+tools: currently 10/10, a median of one tool call per question, and zero outbound
+HTTP requests for the whole set. It fixes the tool path rather than letting a
+model pick it, so it proves the questions are answerable and at what cost, not
+that a model finds its way. The model-in-the-loop half is still missing.
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -91,8 +104,8 @@ likely to be wrong is unit-testable without a network. `index.py` reads the
 bundled metadata. `client.py` is the only module that touches the network.
 `server.py` is thin FastMCP wrappers.
 
-The published payloads are columnar — parallel arrays of integer indices into
-canonical lists. Upstream documents that encoding as append-only;
+The published payloads are columnar: parallel arrays of integer indices into
+canonical lists. Upstream documents that encoding as append-only, and
 `tests/test_wire_contract.py` re-reads the live data and fails if an index we
 would decode falls outside our lists, so a silent relabelling becomes a test
 failure rather than a wrong answer.

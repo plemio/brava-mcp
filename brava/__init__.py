@@ -1,4 +1,4 @@
-"""brava — the token-optimised core of the BRaVa MCP server.
+"""brava: the token-optimised core of the BRaVa MCP server.
 
 `constants`, `query` and `variants` are pure (stdlib-only): they hold the wire
 contract and all of the decoding, filtering and ranking, so the part most likely

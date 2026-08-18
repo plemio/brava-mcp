@@ -1,4 +1,4 @@
-"""Decoding correctness — the columnar integer encoding is where errors hide."""
+"""Decoding correctness: the columnar integer encoding is where errors hide."""
 
 import math
 
@@ -10,14 +10,14 @@ from brava.constants import MASK_LABEL, p_from_lp, tier
 
 class TestEffectInterpretation:
     def test_binary_beta_sign_maps_to_risk_or_protection(self):
-        assert q.effect_label(0.3, "binary") == "risk+"
-        assert q.effect_label(-0.3, "binary") == "protective-"
+        assert q.effect_label(0.3, "binary") == "risk-increasing"
+        assert q.effect_label(-0.3, "binary") == "protective"
 
     def test_quantitative_avoids_risk_language(self):
-        # A lower LDL-C is not "protective" in the data's own terms — the trait
+        # A lower LDL-C is not "protective" in the data's own terms: the trait
         # has no polarity, so the label must not invent one.
-        assert q.effect_label(-0.037, "quantitative") == "lower-"
-        assert q.effect_label(0.037, "quantitative") == "higher+"
+        assert q.effect_label(-0.037, "quantitative") == "lowers"
+        assert q.effect_label(0.037, "quantitative") == "raises"
 
     def test_zero_and_missing_have_no_direction(self):
         assert q.effect_label(0.0, "binary") is None
@@ -121,7 +121,7 @@ class TestForest:
 
     def test_concordance_excludes_pooled_strata(self, pcsk9_gene):
         # 'All' is the comparison baseline and 'non_EUR' pools four of the five
-        # superpops — counting either would double-count the same individuals.
+        # superpops, and counting either would double-count the same individuals.
         res = q.forest(
             pcsk9_gene, ix.phenotypes()[ix.resolve_phenotype("LDLC")],
             pheno_idx=ix.resolve_phenotype("LDLC"), mask_idx=0, maf_idx=0, test="SKAT-O",
@@ -151,3 +151,30 @@ class TestCollapse:
         ]
         out = q.collapse_best(rows, ("ensg",))
         assert [r["p"] for r in out] == ["1e-9", "1e-5"]
+
+
+class TestAggregate:
+    def test_ranks_genes_by_how_many_traits_they_hit(self):
+        rows = [
+            {"ensg": "A", "gene": "AAA", "trait_id": "t1", "trait": "T1", "p": "1e-9"},
+            {"ensg": "A", "gene": "AAA", "trait_id": "t2", "trait": "T2", "p": "1e-8"},
+            {"ensg": "B", "gene": "BBB", "trait_id": "t1", "trait": "T1", "p": "1e-20"},
+        ]
+        out = q.aggregate(rows, "gene")
+        # Count wins over raw significance: B has the smaller p but hits one trait.
+        assert [r["gene"] for r in out] == ["AAA", "BBB"]
+        assert out[0]["traits"] == 2
+        assert out[0]["strongest_p"] == "1e-9"
+        assert out[0]["strongest_trait"] == "T1"
+        assert out[0]["trait_list"] == "T1, T2"
+
+    def test_can_rank_traits_by_implicated_genes(self):
+        rows = [
+            {"ensg": "A", "gene": "AAA", "trait_id": "t1", "trait": "T1", "p": "1e-9"},
+            {"ensg": "B", "gene": "BBB", "trait_id": "t1", "trait": "T1", "p": "1e-8"},
+            {"ensg": "C", "gene": "CCC", "trait_id": "t2", "trait": "T2", "p": "1e-30"},
+        ]
+        out = q.aggregate(rows, "trait")
+        assert out[0]["trait"] == "T1"
+        assert out[0]["genes"] == 2
+        assert out[0]["strongest_gene"] == "AAA"
