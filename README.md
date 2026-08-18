@@ -59,10 +59,9 @@ is why they travel with the columns rather than sitting in a README.
 
 ## The database
 
-Acquired the way `ciqual-mcp` acquires its dataset: downloaded once into
-`~/.cache/brava-mcp/` at first use, never shipped in the git clone (the clone is
-reset on every daemon spawn, so a gigabyte inside it would be re-fetched
-forever). 873 MB, published as a
+Downloaded once into `~/.cache/brava-mcp/` at first use, and deliberately not
+committed: deployments reset the clone on every spawn, so a gigabyte inside it
+would be re-fetched forever. A clone is 3.9 MB. 873 MB, published as a
 [release asset](https://github.com/plemio/brava-mcp/releases/tag/data-v1).
 
 Built by `etl/build_db.py` from the 280 published `phenotype/{P}.{ANC}.json`
