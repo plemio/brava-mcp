@@ -1,0 +1,24 @@
+[project]
+name = "brava-mcp"
+version = "0.1.0"
+description = "MCP server for the Biobank Rare Variant Analysis (BRaVa) consortium gene- and variant-level association results"
+requires-python = ">=3.11"
+dependencies = [
+    "aiohttp>=3.13.3",
+    "certifi>=2024.0.0",
+    "fastmcp>=3.4,<4",
+    "toons>=0.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.26",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+asyncio_mode = "auto"
+markers = [
+    "network: hits the live upstream data (skipped by default with -m 'not network')",
+]
