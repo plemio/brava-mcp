@@ -524,8 +524,8 @@ def _verdict(
     significance on sample size alone. Reporting that as "partial" invites the
     reader to hear "does not replicate", when the directions are unanimous.
 
-    Deliberately coarse otherwise. The inputs are upstream's; the grouping is
-    ours, which is why the caller states it is derived rather than published.
+    Coarse otherwise. The inputs are upstream's; the grouping is ours, which is
+    why the caller states it is derived rather than published.
     """
     def _split(value: str | None) -> tuple[int, int] | None:
         try:

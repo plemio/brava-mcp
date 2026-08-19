@@ -1,6 +1,6 @@
 """Recompute the eval gold answers from the RAW upstream files.
 
-Deliberately does not import anything from `brava`: it re-reads the published
+Imports nothing from `brava`: it re-reads the published
 JSON and re-implements the decoding in a few lines here. If it used the server's
 decoder the benchmark would agree with a decoding bug instead of catching it,
 and the whole exercise would be circular.

@@ -87,7 +87,7 @@ def found(gold: str, blob: str) -> bool:
     inside "note:". The boundary is widened to exclude "." as well as word
     characters, so a number cannot match part of a longer decimal.
 
-    Deliberately NOT restricted to data lines: `warning:` carries the calibration
+    Not restricted to data lines: `warning:` carries the calibration
     -control flag, which is itself evidence for one of the questions.
     """
     # A number must not match inside a longer one ("27" in "2.27e-05"), so digits
