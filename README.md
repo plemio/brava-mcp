@@ -40,22 +40,21 @@ WHERE a.ancestry='AFR' AND a.p_skato < 2.5e-6 AND NOT EXISTS (
 | `gene_phenotype_detail` | Cross-ancestry replication for a gene-trait pair, or a screen over a hit list |
 | `variants` | Single-variant results, genome-wide for a trait or inside one gene |
 
-The three non-query tools cover what SQL cannot.
+Why the other three exist.
 
-`gene_phenotype_detail`, because the concordance count must exclude `All` and
-`non_EUR`, which pool the same individuals as the strata being counted: the
-obvious SQL double-counts and looks entirely reasonable.
+`gene_phenotype_detail` computes the concordance count over the five
+superpopulations only, excluding `All` and `non_EUR`, which pool the same
+individuals. A query that aggregates over every ancestry double-counts.
 
-`variants`, because the variant-level release is a separate upstream format, an
-order of magnitude larger and rebuilt often enough that a local copy would be
-stale within the week.
+`variants` fetches over HTTP because the variant-level release is a separate
+upstream format, an order of magnitude larger, and republished often enough that
+a local copy would be out of date within the week.
 
-`schema()`, because a syntactically perfect query can still be scientifically
-wrong here. Effect sizes belong to a different test than the p-value beside them,
+`schema()` returns the tables and columns, runnable query templates, and ten
+pitfalls: effect sizes belong to a different test than the p-value beside them,
 one mask is a calibration control rather than a biological category, ancestry
-strata overlap, and a p-value of exactly zero is the strongest result rather than
-a missing one. Several of those invert an answer instead of degrading it, which
-is why they travel with the columns rather than sitting in a README.
+strata overlap, a p-value of exactly zero is the strongest result rather than a
+missing one, and six more. Read it before writing SQL.
 
 ## The database
 
