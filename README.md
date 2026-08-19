@@ -7,12 +7,12 @@ traits, 7 ancestry strata.
 
 Summary statistics only. **Not for clinical use.**
 
-## It ships the table, not a wrapper around it
+## SQL over the whole table
 
-The gene-level results are a single flat fact table, and a model already writes
-SQL at expert level, so `query` hands it over: 61,791,444 rows, locally, no
-network. Any question is a query, including the ones a fixed set of tools would
-never have anticipated.
+`query` runs read-only SQL against all 61,791,444 gene-level rows: every gene x
+trait x variant-mask x MAF-cutoff x ancestry cell, with the Burden, SKAT and
+SKAT-O p-values, the effect size and its standard error, and the cross-cohort
+heterogeneity test. The database is local, so a query costs no network.
 
 ```sql
 -- what does this gene do
