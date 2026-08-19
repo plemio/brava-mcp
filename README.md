@@ -60,9 +60,8 @@ missing one, and six more. Read it before writing SQL.
 
 873 MB, published as a
 [release asset](https://github.com/plemio/brava-mcp/releases/tag/data-v1) and
-downloaded once into `~/.cache/brava-mcp/` at first use. It is not committed:
-deployments reset the clone on every spawn, so a gigabyte inside it would be
-re-fetched forever. Cloning this repo costs 3.9 MB.
+downloaded once into `~/.cache/brava-mcp/` at first use. Cloning this repo costs
+3.9 MB.
 
 Built by `etl/build_db.py` from the 280 published `phenotype/{P}.{ANC}.json`
 files. Those carry the same data as the 19,541 per-gene files, so the pivot is
