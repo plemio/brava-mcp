@@ -11,11 +11,11 @@ version of this server exposed seven hand-carved tools whose parameters
 worse, one review cycle at a time, while every question nobody had anticipated
 stayed out of reach. `query` removes that ceiling.
 
-What survives as a tool is what SQL cannot know: the semantic traps that make a
-syntactically perfect query scientifically wrong (`schema`), a derived summary
-whose correct form is easy to get subtly wrong (`gene_phenotype_detail`), and the
-variant-level data, which lives in a separate volatile format upstream and is
-still fetched over HTTP (`variants`).
+The other three tools cover what SQL does not: the pitfalls that make a
+syntactically valid query scientifically wrong (`schema`), a concordance count
+that must exclude two pooled ancestry strata (`gene_phenotype_detail`), and the
+variant-level data, published upstream in a separate format and fetched over
+HTTP (`variants`).
 
 Data source: the public files behind https://nikbaya.github.io/brava_browser/
 (MIT, https://github.com/nikbaya/brava_browser). Summary statistics only.
@@ -397,11 +397,10 @@ async def variants(
     it restricts to that gene and adds the per-biobank effect-direction tally,
     the cross-biobank replication evidence.
 
-    Still fetched over HTTP rather than shipped in the database: the variant-level
-    format is a separate, actively changing upstream release, an order of
-    magnitude larger than the gene-level table, and rebuilt often enough that a
-    local copy would be stale within the week. Each file is cached permanently
-    once fetched.
+    Fetched over HTTP rather than shipped in the local database: the variant-level
+    release is a separate upstream format of 3.09 GiB across ~176,000 objects,
+    against 1.19 GiB for the gene-level data. Each file is cached permanently once
+    fetched.
 
     Each row links to gnomAD, where population allele frequencies live.
 

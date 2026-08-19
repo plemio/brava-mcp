@@ -7,9 +7,9 @@ joining a slice back onto that table. Get it wrong and you silently attribute
 a statistic to the wrong variant, which is the worst failure mode available
 here. Hence a separate, fully testable module.
 
-This is also the least stable of the three data tiers: upstream rebuilt and
-re-uploaded all ~170k variant objects twice on 2026-08-17. Callers must degrade
-gracefully rather than assume the shape holds.
+Upstream rebuilt and re-uploaded all ~170k variant objects twice on 2026-08-17,
+adding columns each time, so callers degrade gracefully rather than assume the
+shape holds.
 
 Per-variant `ed` is a per-biobank effect-direction string (one character per
 contributing biobank: '+', '-', or '?' for absent), the cross-biobank

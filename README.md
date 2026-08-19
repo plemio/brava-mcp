@@ -46,9 +46,9 @@ Why the other three exist.
 superpopulations only, excluding `All` and `non_EUR`, which pool the same
 individuals. A query that aggregates over every ancestry double-counts.
 
-`variants` fetches over HTTP because the variant-level release is a separate
-upstream format, an order of magnitude larger, and republished often enough that
-a local copy would be out of date within the week.
+`variants` fetches over HTTP. The variant-level release is a separate upstream
+format of 3.09 GiB across ~176,000 objects, against 1.19 GiB for the gene-level
+data, and it is not included in the local database.
 
 `schema()` returns the tables and columns, runnable query templates, and ten
 pitfalls: effect sizes belong to a different test than the p-value beside them,
